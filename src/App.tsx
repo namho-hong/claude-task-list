@@ -328,9 +328,7 @@ function App() {
               >
                 <div className="list-card-header">
                   <span className="list-name">
-                    {isUuid(list.name)
-                      ? list.name.slice(0, 8) + "…"
-                      : list.name}{" "}
+                    {list.name}{" "}
                     <span className="list-count-inline">
                       ({list.completed}/{list.total})
                     </span>
