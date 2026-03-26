@@ -218,9 +218,16 @@ function App() {
             >
               <div className="list-card-header">
                 <span className="list-name">{list.name}</span>
-                <span className="list-count">
-                  {list.completed} / {list.total}
-                </span>
+                <button
+                  className="btn-play"
+                  data-testid={`btn-play-${list.name}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleSpawnAll(list.name);
+                  }}
+                >
+                  ▶
+                </button>
               </div>
               <div
                 className="progress-bar-bg"
@@ -231,7 +238,9 @@ function App() {
                   style={{ width: `${progressPercent(list)}%` }}
                 />
               </div>
-              <div className="progress-label">{progressPercent(list)}%</div>
+              <div className="progress-label">
+                {list.completed} / {list.total} · {progressPercent(list)}%
+              </div>
             </div>
           ))}
 

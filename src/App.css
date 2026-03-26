@@ -36,7 +36,7 @@ body {
 
 .header-icon {
   font-size: 16px;
-  color: #8b8bf5;
+  color: #DA7756;
   font-weight: 700;
 }
 
@@ -109,6 +109,24 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* Play button on list card */
+.btn-play {
+  background: rgba(218, 119, 86, 0.2);
+  border: 1px solid rgba(218, 119, 86, 0.3);
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 11px;
+  color: #DA7756;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+
+.btn-play:hover {
+  background: rgba(218, 119, 86, 0.35);
+}
+
 /* Progress bar */
 .progress-bar-bg {
   height: 4px;
@@ -119,7 +137,7 @@ body {
 
 .progress-bar-fill {
   height: 100%;
-  background: linear-gradient(90deg, #7b7bf5, #a78bfa);
+  background: linear-gradient(90deg, #DA7756, #e8956e);
   border-radius: 2px;
   transition: width 0.3s ease;
   min-width: 0;
@@ -129,7 +147,7 @@ body {
   font-size: 11px;
   color: rgba(255, 255, 255, 0.3);
   margin-top: 4px;
-  text-align: right;
+  text-align: left;
 }
 
 /* New List */
@@ -170,7 +188,7 @@ body {
 }
 
 .text-input:focus {
-  border-color: rgba(139, 139, 245, 0.5);
+  border-color: rgba(218, 119, 86, 0.5);
   background: rgba(255, 255, 255, 0.1);
 }
 
@@ -180,25 +198,25 @@ body {
 
 /* Buttons */
 .btn-create {
-  background: rgba(139, 139, 245, 0.3);
-  border: 1px solid rgba(139, 139, 245, 0.4);
+  background: rgba(218, 119, 86, 0.3);
+  border: 1px solid rgba(218, 119, 86, 0.4);
   border-radius: 6px;
   padding: 6px 14px;
   font-size: 12px;
-  color: #c8c8ff;
+  color: #e8956e;
   cursor: pointer;
   font-family: inherit;
   transition: background 0.15s;
 }
 
 .btn-create:hover {
-  background: rgba(139, 139, 245, 0.45);
+  background: rgba(218, 119, 86, 0.45);
 }
 
 .btn-back {
   background: none;
   border: none;
-  color: #8b8bf5;
+  color: #DA7756;
   font-size: 18px;
   cursor: pointer;
   padding: 0 4px;
@@ -206,23 +224,23 @@ body {
 }
 
 .btn-back:hover {
-  color: #a8a8ff;
+  color: #e8956e;
 }
 
 .btn-spawn {
-  background: rgba(245, 158, 66, 0.2);
-  border: 1px solid rgba(245, 158, 66, 0.3);
+  background: rgba(218, 119, 86, 0.2);
+  border: 1px solid rgba(218, 119, 86, 0.3);
   border-radius: 6px;
   padding: 4px 10px;
   font-size: 12px;
-  color: #f5a742;
+  color: #DA7756;
   cursor: pointer;
   font-family: inherit;
   transition: background 0.15s;
 }
 
 .btn-spawn:hover {
-  background: rgba(245, 158, 66, 0.35);
+  background: rgba(218, 119, 86, 0.35);
 }
 
 /* Task items */
@@ -271,9 +289,9 @@ body {
 /* Spawn task button */
 .btn-spawn-task {
   background: none;
-  border: 1px solid rgba(245, 158, 66, 0.25);
+  border: 1px solid rgba(218, 119, 86, 0.25);
   border-radius: 4px;
-  color: #f5a742;
+  color: #DA7756;
   font-size: 10px;
   cursor: pointer;
   padding: 2px 6px;
@@ -287,12 +305,12 @@ body {
 }
 
 .btn-spawn-task:hover {
-  background: rgba(245, 158, 66, 0.2);
+  background: rgba(218, 119, 86, 0.2);
 }
 
 /* Status icon colors */
 .status-active {
-  color: #7b7bf5;
+  color: #DA7756;
 }
 
 /* Add task row */
@@ -305,12 +323,12 @@ body {
 }
 
 .btn-add-task {
-  background: rgba(139, 139, 245, 0.25);
-  border: 1px solid rgba(139, 139, 245, 0.35);
+  background: rgba(218, 119, 86, 0.25);
+  border: 1px solid rgba(218, 119, 86, 0.35);
   border-radius: 6px;
   padding: 6px 12px;
   font-size: 12px;
-  color: #c8c8ff;
+  color: #e8956e;
   cursor: pointer;
   font-family: inherit;
   transition: background 0.15s;
@@ -318,7 +336,7 @@ body {
 }
 
 .btn-add-task:hover {
-  background: rgba(139, 139, 245, 0.4);
+  background: rgba(218, 119, 86, 0.4);
 }
 
 /* Tooltip */
@@ -380,12 +398,12 @@ body {
 }
 
 .settings-select:focus {
-  border-color: rgba(139, 139, 245, 0.5);
+  border-color: rgba(218, 119, 86, 0.5);
 }
 
 .settings-warning {
   font-size: 11px;
-  color: #f5a742;
+  color: #DA7756;
   padding: 0 16px 6px;
 }
 

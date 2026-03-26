@@ -352,7 +352,7 @@ fn spawn_list(list_name: String) -> Result<(), String> {
 fn spawn_task(list_name: String, task_subject: String) -> Result<(), String> {
     let escaped_subject = task_subject.replace('\'', "\\'").replace('"', "\\\"");
     let command = format!(
-        "claude $'{} 태스크 리스트에서 \\\"{}\\\" 태스크를 먼저 작업해줘'",
+        "CLAUDE_CODE_TASK_LIST_ID={} claude $'그중에서 \\\"{}\\\" 태스크를 먼저 작업해줘'",
         list_name, escaped_subject
     );
     spawn_in_terminal(&command)
