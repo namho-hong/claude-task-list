@@ -24,6 +24,7 @@ interface TaskList {
   tasks: Task[];
   total: number;
   completed: number;
+  lastUpdated: number;
 }
 
 type Screen = { type: "lists" } | { type: "detail"; listName: string };
@@ -295,17 +296,34 @@ function App() {
         </div>
         <div className="divider" />
         <div className="content">
-          {lists
-            .filter((list) =>
+          {(() => {
+            const filtered = lists.filter((list) =>
               activeTab === "named" ? !isUuid(list.name) : isUuid(list.name)
-            )
-            .map((list) => (
+            );
+
+            const renderCard = (list: TaskList, showSpawn = true) => (
               <div
                 key={list.name}
                 className="list-card"
                 data-testid={`list-card-${list.name}`}
                 onClick={() =>
                   setScreen({ type: "detail", listName: list.name })
+                }
+                onContextMenu={(e) =>
+                  showContextMenu(e, [
+                    {
+                      label: "Rename",
+                      onClick: () => {
+                        const newName = prompt("새 이름:", list.name);
+                        if (newName) handleRenameList(list.name, newName);
+                      },
+                    },
+                    {
+                      label: "Delete",
+                      danger: true,
+                      onClick: () => handleDeleteList(list.name),
+                    },
+                  ])
                 }
               >
                 <div className="list-card-header">
@@ -317,16 +335,18 @@ function App() {
                       ({list.completed}/{list.total})
                     </span>
                   </span>
-                  <button
-                    className="btn-play"
-                    data-testid={`btn-play-${list.name}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleSpawnAll(list.name);
-                    }}
-                  >
-                    <ClawdIcon size={18} />
-                  </button>
+                  {showSpawn && (
+                    <button
+                      className="btn-play"
+                      data-testid={`btn-play-${list.name}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleSpawnAll(list.name);
+                      }}
+                    >
+                      <ClawdIcon size={18} />
+                    </button>
+                  )}
                 </div>
                 <div
                   className="progress-bar-bg"
@@ -338,7 +358,34 @@ function App() {
                   />
                 </div>
               </div>
-            ))}
+            );
+
+            if (activeTab === "unnamed") {
+              const withTasks = filtered.filter((l) => l.total > 0);
+              const empty = filtered.filter((l) => l.total === 0);
+              return (
+                <>
+                  {withTasks.length > 0 && (
+                    <>
+                      <div className="section-header">With Tasks</div>
+                      {withTasks.map((list) => renderCard(list, true))}
+                    </>
+                  )}
+                  {empty.length > 0 && (
+                    <>
+                      <div className="section-header">Empty Sessions</div>
+                      {empty.map((list) => renderCard(list, false))}
+                    </>
+                  )}
+                  {filtered.length === 0 && (
+                    <div className="empty-state">No unnamed sessions</div>
+                  )}
+                </>
+              );
+            }
+
+            return filtered.map((list) => renderCard(list, true));
+          })()}
 
           {activeTab === "named" &&
             (showNewListInput ? (

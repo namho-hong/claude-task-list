@@ -59,6 +59,8 @@ pub struct TaskList {
     pub tasks: Vec<Task>,
     pub total: usize,
     pub completed: usize,
+    #[serde(rename = "lastUpdated")]
+    pub last_updated: u64,
 }
 
 fn tasks_dir() -> PathBuf {
@@ -89,10 +91,30 @@ fn get_task_lists() -> Vec<TaskList> {
             let name = path.file_name().unwrap().to_string_lossy().to_string();
 
             let mut tasks = vec![];
+            let mut max_mtime: u64 = 0;
+
+            // Get directory mtime as fallback
+            if let Ok(meta) = fs::metadata(&path) {
+                if let Ok(modified) = meta.modified() {
+                    if let Ok(dur) = modified.duration_since(UNIX_EPOCH) {
+                        max_mtime = dur.as_secs();
+                    }
+                }
+            }
+
             if let Ok(files) = fs::read_dir(&path) {
                 for file in files.flatten() {
                     let file_path = file.path();
                     if file_path.extension().map_or(false, |e| e == "json") {
+                        // Track most recent file mtime
+                        if let Ok(meta) = fs::metadata(&file_path) {
+                            if let Ok(modified) = meta.modified() {
+                                if let Ok(dur) = modified.duration_since(UNIX_EPOCH) {
+                                    max_mtime = max_mtime.max(dur.as_secs());
+                                }
+                            }
+                        }
+
                         let file_name = file_path.file_stem().unwrap().to_string_lossy();
                         // Skip guard task (0.json)
                         if file_name == "0" {
@@ -112,11 +134,13 @@ fn get_task_lists() -> Vec<TaskList> {
                 tasks,
                 total,
                 completed,
+                last_updated: max_mtime,
             });
         }
     }
 
-    lists.sort_by(|a, b| a.name.cmp(&b.name));
+    // Sort by last_updated descending (most recent first)
+    lists.sort_by(|a, b| b.last_updated.cmp(&a.last_updated));
     lists
 }
 
