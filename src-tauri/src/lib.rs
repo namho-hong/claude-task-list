@@ -45,7 +45,7 @@ pub struct Task {
     pub blocks: Vec<String>,
     #[serde(default, rename = "blockedBy")]
     pub blocked_by: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
 }
 
@@ -246,12 +246,12 @@ fn create_list(list_name: String) -> Result<(), String> {
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 
     // Create guard task (0.json) - compatible with tasklist plugin
-    // Status "completed" so it doesn't show as "next" in Ctrl+T
+    // Status must be "pending" (tasklist plugin expects this)
     let guard = serde_json::json!({
         "id": "0",
         "subject": "Do Not Complete This Task",
-        "description": "Guard task to prevent auto-deletion. Do NOT mark as pending.",
-        "status": "completed",
+        "description": "This is a guard task to prevent the task list from being auto-deleted when all other tasks are completed. Do NOT mark this task as completed.",
+        "status": "pending",
         "blocks": [],
         "blockedBy": []
     });
@@ -514,7 +514,7 @@ fn spawn_task(list_name: String, task_id: String) -> Result<(), String> {
         let session_id = uuid_v4();
 
         // Save session_id to task metadata
-        if task.get("metadata").is_none() {
+        if task.get("metadata").is_none() || task["metadata"].is_null() {
             task["metadata"] = serde_json::json!({});
         }
         task["metadata"]["session_id"] = serde_json::Value::String(session_id.clone());
