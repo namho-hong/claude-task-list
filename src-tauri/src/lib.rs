@@ -409,18 +409,77 @@ fn is_uuid(name: &str) -> bool {
             .all(|(&len, part)| part.len() == len && part.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
+/// Find the project directory where a session was originally run
+/// by reading the cwd field from the session JSONL file
+fn find_session_project_dir(session_id: &str) -> Option<String> {
+    let home = dirs::home_dir()?;
+    let projects_dir = home.join(".claude").join("projects");
+    if !projects_dir.exists() {
+        return None;
+    }
+    for entry in fs::read_dir(&projects_dir).ok()?.flatten() {
+        let project_path = entry.path();
+        if !project_path.is_dir() {
+            continue;
+        }
+        let jsonl = project_path.join(format!("{}.jsonl", session_id));
+        if jsonl.exists() {
+            // Read cwd from session file (appears in early lines)
+            if let Ok(content) = fs::read_to_string(&jsonl) {
+                for line in content.lines().take(10) {
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
+                        if let Some(cwd) = val.get("cwd").and_then(|v| v.as_str()) {
+                            if !cwd.is_empty() {
+                                return Some(cwd.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Also check directory-type sessions
+        let dir = project_path.join(session_id);
+        if dir.is_dir() {
+            // Look for any jsonl inside
+            if let Ok(files) = fs::read_dir(&dir) {
+                for file in files.flatten() {
+                    if file.path().extension().map_or(false, |e| e == "jsonl") {
+                        if let Ok(content) = fs::read_to_string(file.path()) {
+                            for line in content.lines().take(10) {
+                                if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
+                                    if let Some(cwd) = val.get("cwd").and_then(|v| v.as_str()) {
+                                        if !cwd.is_empty() {
+                                            return Some(cwd.to_string());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 #[tauri::command]
 fn spawn_list(list_name: String) -> Result<(), String> {
-    let command = if is_uuid(&list_name) {
-        // Unnamed session: resume directly using the UUID as session ID
-        format!("claude --resume {}", list_name)
-    } else {
-        // Named list: spawn with task list env var
-        format!(
-            "CLAUDE_CODE_TASK_LIST_ID={} claude 'ToolSearch로 TaskList를 조회해서 우선순위를 파악하고 먼저 작업할 태스크를 제안해줘. tasklist 스킬은 사용하지 마.'",
-            list_name
-        )
-    };
+    if is_uuid(&list_name) {
+        // Unnamed session: resume in the original project directory
+        if let Some(project_dir) = find_session_project_dir(&list_name) {
+            let command = format!("cd {} && claude --resume {}", project_dir, list_name);
+            return spawn_in_terminal(&command);
+        }
+        // Fallback: just use task list ID
+        let command = format!("CLAUDE_CODE_TASK_LIST_ID={} claude", list_name);
+        return spawn_in_terminal(&command);
+    }
+
+    let command = format!(
+        "CLAUDE_CODE_TASK_LIST_ID={} claude 'ToolSearch로 TaskList를 조회해서 우선순위를 파악하고 먼저 작업할 태스크를 제안해줘. tasklist 스킬은 사용하지 마.'",
+        list_name
+    );
     spawn_in_terminal(&command)
 }
 
