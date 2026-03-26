@@ -1,0 +1,398 @@
+@import "tailwindcss";
+
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #e5e5e5;
+  background-color: transparent;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: transparent;
+  overflow: hidden;
+}
+
+.app-container {
+  min-height: 100vh;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Header */
+.header {
+  display: flex;
+  align-items: center;
+  padding: 14px 16px 10px;
+  gap: 8px;
+}
+
+.header-icon {
+  font-size: 16px;
+  color: #8b8bf5;
+  font-weight: 700;
+}
+
+.header-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #f0f0f0;
+  flex: 1;
+}
+
+.divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.06);
+  margin: 0 12px;
+}
+
+/* Content area */
+.content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 12px 12px;
+}
+
+.content::-webkit-scrollbar {
+  width: 4px;
+}
+.content::-webkit-scrollbar-track {
+  background: transparent;
+}
+.content::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 2px;
+}
+
+/* List Card */
+.list-card {
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.list-card:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.list-card:active {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.list-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.list-name {
+  font-weight: 500;
+  font-size: 13px;
+  color: #f0f0f0;
+}
+
+.list-count {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.4);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Progress bar */
+.progress-bar-bg {
+  height: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #7b7bf5, #a78bfa);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+  min-width: 0;
+}
+
+.progress-label {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.3);
+  margin-top: 4px;
+  text-align: right;
+}
+
+/* New List */
+.new-list-card {
+  border-style: dashed;
+  border-color: rgba(255, 255, 255, 0.1);
+  background: transparent;
+  text-align: center;
+}
+
+.new-list-card:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.new-list-text {
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 13px;
+}
+
+.new-list-input-card {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* Text input */
+.text-input {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: #f0f0f0;
+  outline: none;
+  font-family: inherit;
+}
+
+.text-input:focus {
+  border-color: rgba(139, 139, 245, 0.5);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.text-input::placeholder {
+  color: rgba(255, 255, 255, 0.3);
+}
+
+/* Buttons */
+.btn-create {
+  background: rgba(139, 139, 245, 0.3);
+  border: 1px solid rgba(139, 139, 245, 0.4);
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 12px;
+  color: #c8c8ff;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+
+.btn-create:hover {
+  background: rgba(139, 139, 245, 0.45);
+}
+
+.btn-back {
+  background: none;
+  border: none;
+  color: #8b8bf5;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.btn-back:hover {
+  color: #a8a8ff;
+}
+
+.btn-spawn {
+  background: rgba(245, 158, 66, 0.2);
+  border: 1px solid rgba(245, 158, 66, 0.3);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: #f5a742;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+
+.btn-spawn:hover {
+  background: rgba(245, 158, 66, 0.35);
+}
+
+/* Task items */
+.task-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 8px;
+  gap: 8px;
+  transition: background 0.1s;
+}
+
+.task-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.task-completed {
+  opacity: 0.4;
+}
+
+.task-status {
+  font-size: 14px;
+  width: 20px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.task-text {
+  font-size: 13px;
+  flex: 1;
+  cursor: pointer;
+}
+
+/* Section headers */
+.section-header {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.3);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 10px 10px 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  margin-bottom: 2px;
+}
+
+/* Spawn task button */
+.btn-spawn-task {
+  background: none;
+  border: 1px solid rgba(245, 158, 66, 0.25);
+  border-radius: 4px;
+  color: #f5a742;
+  font-size: 10px;
+  cursor: pointer;
+  padding: 2px 6px;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+
+.task-item:hover .btn-spawn-task {
+  opacity: 1;
+}
+
+.btn-spawn-task:hover {
+  background: rgba(245, 158, 66, 0.2);
+}
+
+/* Status icon colors */
+.status-active {
+  color: #7b7bf5;
+}
+
+/* Add task row */
+.add-task-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+  padding: 0 2px;
+}
+
+.btn-add-task {
+  background: rgba(139, 139, 245, 0.25);
+  border: 1px solid rgba(139, 139, 245, 0.35);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: #c8c8ff;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+
+.btn-add-task:hover {
+  background: rgba(139, 139, 245, 0.4);
+}
+
+/* Tooltip */
+.tooltip {
+  position: fixed;
+  transform: translateY(-100%);
+  background: rgba(50, 50, 50, 0.95);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.8);
+  max-width: 280px;
+  pointer-events: none;
+  z-index: 100;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Settings */
+.btn-settings {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 4px;
+  transition: color 0.15s;
+}
+
+.btn-settings:hover {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 16px 8px;
+  gap: 8px;
+}
+
+.settings-label {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.settings-select {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: #f0f0f0;
+  font-family: inherit;
+  outline: none;
+  cursor: pointer;
+}
+
+.settings-select:focus {
+  border-color: rgba(139, 139, 245, 0.5);
+}
+
+.settings-warning {
+  font-size: 11px;
+  color: #f5a742;
+  padding: 0 16px 6px;
+}
+
+/* Empty state */
+.empty-state {
+  text-align: center;
+  color: rgba(255, 255, 255, 0.3);
+  font-size: 13px;
+  padding: 40px 0;
+}
