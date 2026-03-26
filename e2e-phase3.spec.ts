@@ -249,7 +249,7 @@ test.describe("Phase 3: Screen 2 태스크 상세 + CRUD", () => {
     expect(tooltipText).toContain("feature/auth");
   });
 
-  test("우클릭 → delete_task 호출", async ({ page }) => {
+  test("우클릭 → 컨텍스트 메뉴 → Delete 클릭", async ({ page }) => {
     await page.addInitScript(() => {
       const orig = (window as any).__TAURI_INTERNALS__.invoke;
       (window as any).__e2e_invokes__ = [];
@@ -267,8 +267,16 @@ test.describe("Phase 3: Screen 2 태스크 상세 + CRUD", () => {
     await page.click('[data-testid="list-card-E2E-Test"]');
     await page.waitForSelector('[data-testid="btn-back"]');
 
-    // Right-click task 3 to delete
+    // Right-click task 3 → context menu appears
     await page.click('[data-testid="task-item-3"]', { button: "right" });
+    await page.waitForTimeout(200);
+
+    // Context menu should be visible
+    const contextMenu = page.locator('.context-menu');
+    await expect(contextMenu).toBeVisible();
+
+    // Click Delete in the context menu
+    await page.click('.context-menu-item.danger');
     await page.waitForTimeout(300);
 
     const invokes = await page.evaluate(

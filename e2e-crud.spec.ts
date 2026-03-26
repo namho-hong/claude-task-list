@@ -275,7 +275,7 @@ test.describe("Phase 4: CRUD 검증", () => {
 
   // === DELETE ===
   test.describe("Delete", () => {
-    test("D1/D2: 우클릭 삭제 -> delete_task 호출 + UI에서 사라짐", async ({ page }) => {
+    test("D1/D2: 우클릭 → 컨텍스트 메뉴 → Delete 클릭", async ({ page }) => {
       const tasks = [
         { id: "1", subject: "Keep This", description: "", status: "pending", blocks: [], blockedBy: [] },
         { id: "2", subject: "Delete This", description: "", status: "pending", blocks: [], blockedBy: [] },
@@ -292,8 +292,13 @@ test.describe("Phase 4: CRUD 검증", () => {
       await expect(page.locator('[data-testid="task-item-1"]')).toBeVisible();
       await expect(page.locator('[data-testid="task-item-2"]')).toBeVisible();
 
-      // Right-click to delete task 2
+      // Right-click task 2 → context menu
       await page.click('[data-testid="task-item-2"]', { button: "right" });
+      await page.waitForTimeout(200);
+      await expect(page.locator('.context-menu')).toBeVisible();
+
+      // Click Delete
+      await page.click('.context-menu-item.danger');
       await page.waitForTimeout(300);
 
       const invokes = await page.evaluate(() => (window as any).__e2e_invokes__);

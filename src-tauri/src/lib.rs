@@ -3,8 +3,26 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::sync::atomic::{AtomicBool, Ordering};
+
+fn uuid_v4() -> String {
+    // Simple UUID v4 generation using system time + random-ish bits
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let seed = now.as_nanos();
+    let a = (seed & 0xFFFFFFFF) as u32;
+    let b = ((seed >> 32) & 0xFFFF) as u16;
+    let c = (((seed >> 48) & 0x0FFF) | 0x4000) as u16; // version 4
+    let d = (((seed >> 60) & 0x3F) | 0x80) as u8; // variant
+    let e = ((seed >> 66) & 0xFF) as u8;
+    let f = (seed.wrapping_mul(6364136223846793005).wrapping_add(1)) as u64;
+    format!(
+        "{:08x}-{:04x}-{:04x}-{:02x}{:02x}-{:012x}",
+        a, b, c, d, e, f & 0xFFFFFFFFFFFF
+    )
+}
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder},
@@ -127,7 +145,7 @@ fn get_tasks(list_name: String) -> Vec<Task> {
             let file_path = file.path();
             if file_path.extension().map_or(false, |e| e == "json") {
                 let file_name = file_path.file_stem().unwrap().to_string_lossy();
-                if file_name == "0" {
+                if file_name == "0" || file_name == "999" {
                     continue;
                 }
                 if let Some(task) = read_task_from_file(&file_path) {
@@ -215,11 +233,12 @@ fn create_list(list_name: String) -> Result<(), String> {
     let dir = tasks_dir().join(&list_name);
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 
-    // Create guard task (0.json)
+    // Create guard task (0.json) - compatible with tasklist plugin
+    // Status "completed" so it doesn't show as "next" in Ctrl+T
     let guard = serde_json::json!({
         "id": "0",
-        "subject": "Guard task",
-        "description": "",
+        "subject": "Do Not Complete This Task",
+        "description": "Guard task to prevent auto-deletion. Do NOT mark as pending.",
         "status": "completed",
         "blocks": [],
         "blockedBy": []
@@ -231,6 +250,15 @@ fn create_list(list_name: String) -> Result<(), String> {
         fs::write(&guard_path, content).map_err(|e| e.to_string())?;
     }
 
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_list(list_name: String) -> Result<(), String> {
+    let dir = tasks_dir().join(&list_name);
+    if dir.exists() {
+        fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
@@ -344,39 +372,69 @@ fn set_terminal(terminal: String) -> Result<String, String> {
 
 #[tauri::command]
 fn spawn_list(list_name: String) -> Result<(), String> {
-    let command = format!("CLAUDE_CODE_TASK_LIST_ID={} claude", list_name);
+    let command = format!(
+        "CLAUDE_CODE_TASK_LIST_ID={} claude 'ToolSearch로 TaskList를 조회해서 우선순위를 파악하고 먼저 작업할 태스크를 제안해줘. tasklist 스킬은 사용하지 마.'",
+        list_name
+    );
     spawn_in_terminal(&command)
 }
 
 #[tauri::command]
 fn spawn_task(list_name: String, task_id: String) -> Result<(), String> {
-    // Read the task JSON to include full context in the prompt
+    // Read task JSON
     let task_path = tasks_dir().join(&list_name).join(format!("{}.json", task_id));
-    let task: serde_json::Value = if task_path.exists() {
+    let mut task: serde_json::Value = if task_path.exists() {
         let content = fs::read_to_string(&task_path).map_err(|e| e.to_string())?;
         serde_json::from_str(&content).map_err(|e| e.to_string())?
     } else {
         return Err("Task file not found".to_string());
     };
 
-    let subject = task["subject"].as_str().unwrap_or("");
-    let description = task["description"].as_str().unwrap_or("");
+    let status = task["status"].as_str().unwrap_or("pending");
+    let existing_session_id = task
+        .get("metadata")
+        .and_then(|m| m.get("session_id"))
+        .and_then(|s| s.as_str())
+        .map(|s| s.to_string());
 
-    let mut prompt_parts = vec![format!("다음 태스크를 작업해줘:")];
-    prompt_parts.push(format!("subject: {}", subject));
-    if !description.is_empty() {
-        prompt_parts.push(format!("description: {}", description));
+    if status == "in_progress" && existing_session_id.is_some() {
+        // Resume existing session
+        let session_id = existing_session_id.unwrap();
+        let command = format!(
+            "CLAUDE_CODE_TASK_LIST_ID={} claude --resume {}",
+            list_name, session_id
+        );
+        spawn_in_terminal(&command)
+    } else {
+        // Start new session
+        let session_id = uuid_v4();
+
+        // Save session_id to task metadata
+        if task.get("metadata").is_none() {
+            task["metadata"] = serde_json::json!({});
+        }
+        task["metadata"]["session_id"] = serde_json::Value::String(session_id.clone());
+        task["status"] = serde_json::Value::String("in_progress".to_string());
+        let updated = serde_json::to_string_pretty(&task).map_err(|e| e.to_string())?;
+        fs::write(&task_path, updated).map_err(|e| e.to_string())?;
+
+        let subject = task["subject"].as_str().unwrap_or("");
+        let description = task["description"].as_str().unwrap_or("");
+
+        let mut prompt = format!("[태스크 #{} - {}]", task_id, subject);
+        if !description.is_empty() {
+            prompt.push_str(&format!("\\n설명: {}", description));
+        }
+        prompt.push_str("\\n\\n이 태스크를 바로 작업해줘. 별도 탐색 없이 위 정보만으로 시작해.");
+        prompt.push_str(&format!("\\n작업 완료 후 TaskUpdate(taskId: \\\"{}\\\", status: \\\"completed\\\")로 완료 처리해줘.", task_id));
+
+        let escaped = prompt.replace('\'', "'\\''");
+        let command = format!(
+            "CLAUDE_CODE_TASK_LIST_ID={} claude --session-id {} $'{}'",
+            list_name, session_id, escaped
+        );
+        spawn_in_terminal(&command)
     }
-    prompt_parts.push("별도 탐색 없이 바로 시작해.".to_string());
-
-    let prompt = prompt_parts.join("\\n");
-    let escaped_prompt = prompt.replace('\'', "\\'").replace('"', "\\\"");
-
-    let command = format!(
-        "CLAUDE_CODE_TASK_LIST_ID={} claude $'{}'",
-        list_name, escaped_prompt
-    );
-    spawn_in_terminal(&command)
 }
 
 fn start_file_watcher(app_handle: tauri::AppHandle) {
@@ -447,6 +505,7 @@ pub fn run() {
             create_task,
             delete_task,
             create_list,
+            delete_list,
             spawn_list,
             spawn_task,
             get_config,
@@ -464,7 +523,10 @@ pub fn run() {
             let toggling = std::sync::Arc::new(AtomicBool::new(false));
             let toggling_clone = toggling.clone();
 
-            let icon = app.default_window_icon().cloned().expect("no app icon");
+            // Load tray-specific icon (checkbox design for menu bar)
+            let tray_icon_bytes = include_bytes!("../icons/tray-icon.png");
+            let icon = tauri::image::Image::from_bytes(tray_icon_bytes)
+                .expect("failed to load tray icon");
             let _tray = TrayIconBuilder::new()
                 .icon(icon)
                 .icon_as_template(true)

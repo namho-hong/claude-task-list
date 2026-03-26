@@ -1,7 +1,28 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
+
+// Clawd - Claude Code's 8-bit pixel art robot mascot
+function ClawdIcon({ size = 20 }: { size?: number }) {
+  const s = size / 16; // scale factor (base grid is 16x16)
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 16 16" shapeRendering="crispEdges">
+      {/* Body - orange rectangle */}
+      <rect x="3" y="3" width="10" height="7" fill="#DA7756" />
+      {/* Head top bumps */}
+      <rect x="4" y="2" width="2" height="1" fill="#DA7756" />
+      <rect x="10" y="2" width="2" height="1" fill="#DA7756" />
+      {/* Eyes */}
+      <rect x="5" y="5" width="2" height="2" fill="#1a1a1a" />
+      <rect x="9" y="5" width="2" height="2" fill="#1a1a1a" />
+      {/* Legs - 4 short legs */}
+      <rect x="4" y="10" width="2" height="3" fill="#DA7756" />
+      <rect x="7" y="10" width="2" height="2" fill="#DA7756" />
+      <rect x="10" y="10" width="2" height="3" fill="#DA7756" />
+    </svg>
+  );
+}
 
 interface Task {
   id: string;
@@ -40,6 +61,12 @@ const TERMINAL_OPTIONS = [
   { value: "warp", label: "Warp" },
 ];
 
+interface ContextMenuState {
+  x: number;
+  y: number;
+  items: { label: string; onClick: () => void; danger?: boolean }[];
+}
+
 function App() {
   const [lists, setLists] = useState<TaskList[]>([]);
   const [screen, setScreen] = useState<Screen>({ type: "lists" });
@@ -54,6 +81,9 @@ function App() {
     x: number;
     y: number;
   } | null>(null);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [showListMenu, setShowListMenu] = useState(false);
+  const listMenuRef = useRef<HTMLDivElement>(null);
 
   const loadLists = useCallback(async () => {
     try {
@@ -74,10 +104,29 @@ function App() {
     const unlisten = listen("tasks-changed", () => {
       loadLists();
     });
+
+    // Reload when window regains focus
+    const handleFocus = () => loadLists();
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) loadLists();
+    });
+
     return () => {
       unlisten.then((fn) => fn());
+      window.removeEventListener("focus", handleFocus);
     };
   }, [loadLists]);
+
+  // Close context menu on outside click
+  useEffect(() => {
+    const handleClick = () => {
+      setContextMenu(null);
+      setShowListMenu(false);
+    };
+    window.addEventListener("click", handleClick);
+    return () => window.removeEventListener("click", handleClick);
+  }, []);
 
   const handleSetTerminal = async (value: string) => {
     setTerminal(value);
@@ -89,7 +138,8 @@ function App() {
   };
 
   const handleCreateList = async () => {
-    const name = newListName.trim();
+    // Replace spaces with hyphens
+    const name = newListName.trim().replace(/\s+/g, "-");
     if (!name) return;
     try {
       await invoke("create_list", { listName: name });
@@ -98,6 +148,16 @@ function App() {
       await loadLists();
     } catch (err) {
       console.error("Failed to create list:", err);
+    }
+  };
+
+  const handleDeleteList = async (listName: string) => {
+    try {
+      await invoke("delete_list", { listName });
+      setScreen({ type: "lists" });
+      await loadLists();
+    } catch (err) {
+      console.error("Failed to delete list:", err);
     }
   };
 
@@ -127,12 +187,7 @@ function App() {
     }
   };
 
-  const handleDeleteTask = async (
-    e: React.MouseEvent,
-    listName: string,
-    taskId: string
-  ) => {
-    e.preventDefault();
+  const handleDeleteTask = async (listName: string, taskId: string) => {
     try {
       await invoke("delete_task", { listName, taskId });
       await loadLists();
@@ -152,9 +207,19 @@ function App() {
   const handleSpawnTask = async (listName: string, taskId: string) => {
     try {
       await invoke("spawn_task", { listName, taskId });
+      await loadLists();
     } catch (err) {
       console.error("Failed to spawn task:", err);
     }
+  };
+
+  const showContextMenu = (
+    e: React.MouseEvent,
+    items: ContextMenuState["items"]
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({ x: e.clientX, y: e.clientY, items });
   };
 
   const showTooltip = (task: Task, e: React.MouseEvent) => {
@@ -217,7 +282,12 @@ function App() {
               onClick={() => setScreen({ type: "detail", listName: list.name })}
             >
               <div className="list-card-header">
-                <span className="list-name">{list.name}</span>
+                <span className="list-name">
+                  {list.name}{" "}
+                  <span className="list-count-inline">
+                    ({list.completed}/{list.total})
+                  </span>
+                </span>
                 <button
                   className="btn-play"
                   data-testid={`btn-play-${list.name}`}
@@ -226,7 +296,7 @@ function App() {
                     handleSpawnAll(list.name);
                   }}
                 >
-                  ▶
+                  <ClawdIcon size={18} />
                 </button>
               </div>
               <div
@@ -238,9 +308,6 @@ function App() {
                   style={{ width: `${progressPercent(list)}%` }}
                 />
               </div>
-              <div className="progress-label">
-                {list.completed} / {list.total} · {progressPercent(list)}%
-              </div>
             </div>
           ))}
 
@@ -250,9 +317,11 @@ function App() {
                 data-testid="input-new-list-name"
                 className="text-input"
                 type="text"
-                placeholder="List name..."
+                placeholder="List name (no spaces)..."
                 value={newListName}
-                onChange={(e) => setNewListName(e.target.value)}
+                onChange={(e) =>
+                  setNewListName(e.target.value.replace(/\s+/g, "-"))
+                }
                 onKeyDown={(e) => {
                   if (e.key === "Enter") handleCreateList();
                   if (e.key === "Escape") {
@@ -276,6 +345,28 @@ function App() {
             </div>
           )}
         </div>
+
+        {/* Context Menu */}
+        {contextMenu && (
+          <div
+            className="context-menu"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {contextMenu.items.map((item, i) => (
+              <div
+                key={i}
+                className={`context-menu-item ${item.danger ? "danger" : ""}`}
+                onClick={() => {
+                  item.onClick();
+                  setContextMenu(null);
+                }}
+              >
+                {item.label}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     );
   }
@@ -309,13 +400,42 @@ function App() {
           ←
         </button>
         <span className="header-title">{screen.listName}</span>
-        <button
-          className="btn-spawn"
-          data-testid="btn-spawn-all"
-          onClick={() => handleSpawnAll(screen.listName)}
-        >
-          ⚡ Spawn
-        </button>
+        <div className="header-actions">
+          <button
+            className="btn-spawn"
+            data-testid="btn-spawn-all"
+            onClick={() => handleSpawnAll(screen.listName)}
+          >
+            <ClawdIcon size={20} />
+          </button>
+          <div className="list-menu-wrapper" ref={listMenuRef}>
+            <button
+              className="btn-more"
+              data-testid="btn-more-menu"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowListMenu(!showListMenu);
+              }}
+            >
+              ⋯
+            </button>
+            {showListMenu && (
+              <div className="dropdown-menu" data-testid="list-dropdown-menu">
+                <div
+                  className="dropdown-item danger"
+                  data-testid="btn-delete-list"
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    setShowListMenu(false);
+                    await handleDeleteList(screen.listName);
+                  }}
+                >
+                  Delete List
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
       <div className="divider" />
       <div className="content">
@@ -334,7 +454,23 @@ function App() {
                 className={`task-item ${task.status === "completed" ? "task-completed" : ""}`}
                 data-testid={`task-item-${task.id}`}
                 onContextMenu={(e) =>
-                  handleDeleteTask(e, screen.listName, task.id)
+                  showContextMenu(e, [
+                    {
+                      label: "Delete",
+                      danger: true,
+                      onClick: () =>
+                        handleDeleteTask(screen.listName, task.id),
+                    },
+                    ...(task.status === "in_progress"
+                      ? [
+                          {
+                            label: "New Session",
+                            onClick: () =>
+                              handleSpawnTask(screen.listName, task.id),
+                          },
+                        ]
+                      : []),
+                  ])
                 }
               >
                 <span
@@ -358,13 +494,13 @@ function App() {
                 </span>
                 {task.status !== "completed" && (
                   <button
-                    className="btn-spawn-task"
+                    className={`btn-spawn-task ${task.status === "in_progress" ? "btn-resume" : ""}`}
                     data-testid={`btn-spawn-${task.id}`}
                     onClick={() =>
                       handleSpawnTask(screen.listName, task.id)
                     }
                   >
-                    ▶
+                    {task.status === "in_progress" ? "Resume" : "Start"}
                   </button>
                 )}
               </div>
@@ -403,6 +539,28 @@ function App() {
           style={{ left: tooltip.x, top: tooltip.y }}
         >
           {tooltip.text}
+        </div>
+      )}
+
+      {/* Context Menu */}
+      {contextMenu && (
+        <div
+          className="context-menu"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {contextMenu.items.map((item, i) => (
+            <div
+              key={i}
+              className={`context-menu-item ${item.danger ? "danger" : ""}`}
+              onClick={() => {
+                item.onClick();
+                setContextMenu(null);
+              }}
+            >
+              {item.label}
+            </div>
+          ))}
         </div>
       )}
     </div>

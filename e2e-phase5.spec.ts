@@ -32,7 +32,7 @@ function setupMock(listsData: any[]) {
 }
 
 test.describe("Phase 5: 폴리시", () => {
-  test("다크모드 전용 UI — 배경 투명 (네이티브 vibrancy 사용)", async ({ page }) => {
+  test("다크모드 전용 UI — 어두운 반투명 배경 + vibrancy", async ({ page }) => {
     const tasks = Array.from({ length: 3 }, (_, i) => ({
       id: String(i + 1),
       subject: `Task ${i + 1}`,
@@ -47,19 +47,18 @@ test.describe("Phase 5: 폴리시", () => {
     await page.goto("http://localhost:1420");
     await page.waitForSelector('[data-testid="app-root"]');
 
-    // Background should be transparent (native vibrancy handles the blur)
+    // Background should be dark semi-transparent overlay for readability
     const bgColor = await page.evaluate(() => {
       const el = document.querySelector(".app-container");
       return el ? getComputedStyle(el).backgroundColor : "";
     });
-    expect(bgColor).toMatch(/rgba?\(\s*0,\s*0,\s*0,\s*0\)/);
+    expect(bgColor).toMatch(/rgba?\(\s*20,\s*20,\s*22/);
 
     // Text color should be light
     const textColor = await page.evaluate(() => {
       const el = document.querySelector(".header-title");
       return el ? getComputedStyle(el).color : "";
     });
-    // rgb(240, 240, 240) or similar light color
     expect(textColor).toMatch(/rgb\(\s*2[0-4]\d/);
   });
 
