@@ -476,10 +476,7 @@ fn spawn_list(list_name: String) -> Result<(), String> {
         return spawn_in_terminal(&command);
     }
 
-    let command = format!(
-        "CLAUDE_CODE_TASK_LIST_ID={} claude 'ToolSearch로 TaskList를 조회해서 우선순위를 파악하고 먼저 작업할 태스크를 제안해줘. tasklist 스킬은 사용하지 마.'",
-        list_name
-    );
+    let command = format!("CLAUDE_CODE_TASK_LIST_ID={} claude", list_name);
     spawn_in_terminal(&command)
 }
 
