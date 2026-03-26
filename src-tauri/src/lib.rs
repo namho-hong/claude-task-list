@@ -349,11 +349,32 @@ fn spawn_list(list_name: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn spawn_task(list_name: String, task_subject: String) -> Result<(), String> {
-    let escaped_subject = task_subject.replace('\'', "\\'").replace('"', "\\\"");
+fn spawn_task(list_name: String, task_id: String) -> Result<(), String> {
+    // Read the task JSON to include full context in the prompt
+    let task_path = tasks_dir().join(&list_name).join(format!("{}.json", task_id));
+    let task: serde_json::Value = if task_path.exists() {
+        let content = fs::read_to_string(&task_path).map_err(|e| e.to_string())?;
+        serde_json::from_str(&content).map_err(|e| e.to_string())?
+    } else {
+        return Err("Task file not found".to_string());
+    };
+
+    let subject = task["subject"].as_str().unwrap_or("");
+    let description = task["description"].as_str().unwrap_or("");
+
+    let mut prompt_parts = vec![format!("다음 태스크를 작업해줘:")];
+    prompt_parts.push(format!("subject: {}", subject));
+    if !description.is_empty() {
+        prompt_parts.push(format!("description: {}", description));
+    }
+    prompt_parts.push("별도 탐색 없이 바로 시작해.".to_string());
+
+    let prompt = prompt_parts.join("\\n");
+    let escaped_prompt = prompt.replace('\'', "\\'").replace('"', "\\\"");
+
     let command = format!(
-        "CLAUDE_CODE_TASK_LIST_ID={} claude $'그중에서 \\\"{}\\\" 태스크를 먼저 작업해줘'",
-        list_name, escaped_subject
+        "CLAUDE_CODE_TASK_LIST_ID={} claude $'{}'",
+        list_name, escaped_prompt
     );
     spawn_in_terminal(&command)
 }

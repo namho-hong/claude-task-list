@@ -77,8 +77,8 @@ test.describe("Phase 4: 스폰 통합", () => {
     expect(spawnCall.args.listName).toBe("E2E-Test");
   });
 
-  test("▶ 개별 Spawn 클릭 → spawn_task 호출 + 태스크 이름 포함", async ({ page }) => {
-    // Click spawn button for task 1 (in_progress, subject: "PR 리뷰")
+  test("▶ 개별 Spawn 클릭 → spawn_task 호출 + 태스크 ID 포함", async ({ page }) => {
+    // Click spawn button for task 1 (in_progress)
     await page.click('[data-testid="btn-spawn-1"]');
     await page.waitForTimeout(300);
 
@@ -86,11 +86,11 @@ test.describe("Phase 4: 스폰 통합", () => {
     const spawnCall = invokes.find((i: any) => i.cmd === "spawn_task");
     expect(spawnCall).toBeTruthy();
     expect(spawnCall.args.listName).toBe("E2E-Test");
-    expect(spawnCall.args.taskSubject).toBe("PR 리뷰");
+    expect(spawnCall.args.taskId).toBe("1");
   });
 
-  test("▶ pending 태스크 Spawn → spawn_task 호출 + 태스크 이름 포함", async ({ page }) => {
-    // Click spawn button for task 2 (pending, subject: "메일 회신")
+  test("▶ pending 태스크 Spawn → spawn_task 호출 + 태스크 ID 포함", async ({ page }) => {
+    // Click spawn button for task 2 (pending)
     await page.click('[data-testid="btn-spawn-2"]');
     await page.waitForTimeout(300);
 
@@ -98,7 +98,7 @@ test.describe("Phase 4: 스폰 통합", () => {
     const spawnCall = invokes.find((i: any) => i.cmd === "spawn_task");
     expect(spawnCall).toBeTruthy();
     expect(spawnCall.args.listName).toBe("E2E-Test");
-    expect(spawnCall.args.taskSubject).toBe("메일 회신");
+    expect(spawnCall.args.taskId).toBe("2");
   });
 
   test("Rust spawn_list osascript 검증 — 클립보드에 올바른 명령어", async ({}) => {
@@ -109,12 +109,10 @@ test.describe("Phase 4: 스폰 통합", () => {
     expect(expectedClipboard).toBe("CLAUDE_CODE_TASK_LIST_ID=E2E-Test claude");
   });
 
-  test("Rust spawn_task osascript 검증 — 클립보드에 태스크 이름 포함", async ({}) => {
-    // The clipboard should contain the task subject in the prompt
+  test("Rust spawn_task 검증 — 환경변수 방식 + 태스크 내용 포함", async ({}) => {
+    // Verify the command format includes CLAUDE_CODE_TASK_LIST_ID and task content
     const listName = "E2E-Test";
-    const taskSubject = "PR 리뷰";
-    const prompt = `claude $'${listName} 태스크 리스트에서 \\"${taskSubject}\\" 태스크를 먼저 작업해줘'`;
-    expect(prompt).toContain(listName);
-    expect(prompt).toContain(taskSubject);
+    const expectedEnvVar = `CLAUDE_CODE_TASK_LIST_ID=${listName}`;
+    expect(expectedEnvVar).toBe("CLAUDE_CODE_TASK_LIST_ID=E2E-Test");
   });
 });

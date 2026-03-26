@@ -149,9 +149,9 @@ function App() {
     }
   };
 
-  const handleSpawnTask = async (listName: string, taskSubject: string) => {
+  const handleSpawnTask = async (listName: string, taskId: string) => {
     try {
-      await invoke("spawn_task", { listName, taskSubject });
+      await invoke("spawn_task", { listName, taskId });
     } catch (err) {
       console.error("Failed to spawn task:", err);
     }
@@ -361,7 +361,7 @@ function App() {
                     className="btn-spawn-task"
                     data-testid={`btn-spawn-${task.id}`}
                     onClick={() =>
-                      handleSpawnTask(screen.listName, task.subject)
+                      handleSpawnTask(screen.listName, task.id)
                     }
                   >
                     ▶
