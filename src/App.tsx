@@ -4,24 +4,9 @@ import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 
 // Clawd - Claude Code's 8-bit pixel art robot mascot
+import clawdImg from "./assets/clawd.png";
 function ClawdIcon({ size = 20 }: { size?: number }) {
-  const s = size / 16; // scale factor (base grid is 16x16)
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 16 16" shapeRendering="crispEdges">
-      {/* Body - orange rectangle */}
-      <rect x="3" y="3" width="10" height="7" fill="#DA7756" />
-      {/* Head top bumps */}
-      <rect x="4" y="2" width="2" height="1" fill="#DA7756" />
-      <rect x="10" y="2" width="2" height="1" fill="#DA7756" />
-      {/* Eyes */}
-      <rect x="5" y="5" width="2" height="2" fill="#1a1a1a" />
-      <rect x="9" y="5" width="2" height="2" fill="#1a1a1a" />
-      {/* Legs - 4 short legs */}
-      <rect x="4" y="10" width="2" height="3" fill="#DA7756" />
-      <rect x="7" y="10" width="2" height="2" fill="#DA7756" />
-      <rect x="10" y="10" width="2" height="3" fill="#DA7756" />
-    </svg>
-  );
+  return <img src={clawdImg} alt="Clawd" width={size} height={size * 0.64} style={{ imageRendering: "pixelated" }} />;
 }
 
 interface Task {
@@ -61,6 +46,9 @@ const TERMINAL_OPTIONS = [
   { value: "warp", label: "Warp" },
 ];
 
+const isUuid = (name: string) =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(name);
+
 interface ContextMenuState {
   x: number;
   y: number;
@@ -70,6 +58,7 @@ interface ContextMenuState {
 function App() {
   const [lists, setLists] = useState<TaskList[]>([]);
   const [screen, setScreen] = useState<Screen>({ type: "lists" });
+  const [activeTab, setActiveTab] = useState<"named" | "unnamed">("named");
   const [newListName, setNewListName] = useState("");
   const [showNewListInput, setShowNewListInput] = useState(false);
   const [newTaskSubject, setNewTaskSubject] = useState("");
@@ -83,6 +72,8 @@ function App() {
   } | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [showListMenu, setShowListMenu] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
   const listMenuRef = useRef<HTMLDivElement>(null);
 
   const loadLists = useCallback(async () => {
@@ -158,6 +149,19 @@ function App() {
       await loadLists();
     } catch (err) {
       console.error("Failed to delete list:", err);
+    }
+  };
+
+  const handleRenameList = async (oldName: string, newName: string) => {
+    const sanitized = newName.trim().replace(/\s+/g, "-");
+    if (!sanitized || sanitized === oldName) return;
+    try {
+      await invoke("rename_list", { oldName, newName: sanitized });
+      setScreen({ type: "detail", listName: sanitized });
+      setActiveTab("named");
+      await loadLists();
+    } catch (err) {
+      console.error("Failed to rename list:", err);
     }
   };
 
@@ -245,7 +249,7 @@ function App() {
     return (
       <div className="app-container" data-testid="app-root">
         <div className="header">
-          <span className="header-icon">✓</span>
+          <ClawdIcon size={22} />
           <span className="header-title">Claude Task List</span>
           <button
             className="btn-settings"
@@ -272,78 +276,109 @@ function App() {
             </div>
           </>
         )}
+        {/* Tab bar */}
+        <div className="tab-bar">
+          <button
+            className={`tab ${activeTab === "named" ? "tab-active" : ""}`}
+            data-testid="tab-named"
+            onClick={() => setActiveTab("named")}
+          >
+            Named
+          </button>
+          <button
+            className={`tab ${activeTab === "unnamed" ? "tab-active" : ""}`}
+            data-testid="tab-unnamed"
+            onClick={() => setActiveTab("unnamed")}
+          >
+            Unnamed
+          </button>
+        </div>
         <div className="divider" />
         <div className="content">
-          {lists.map((list) => (
-            <div
-              key={list.name}
-              className="list-card"
-              data-testid={`list-card-${list.name}`}
-              onClick={() => setScreen({ type: "detail", listName: list.name })}
-            >
-              <div className="list-card-header">
-                <span className="list-name">
-                  {list.name}{" "}
-                  <span className="list-count-inline">
-                    ({list.completed}/{list.total})
+          {lists
+            .filter((list) =>
+              activeTab === "named" ? !isUuid(list.name) : isUuid(list.name)
+            )
+            .map((list) => (
+              <div
+                key={list.name}
+                className="list-card"
+                data-testid={`list-card-${list.name}`}
+                onClick={() =>
+                  setScreen({ type: "detail", listName: list.name })
+                }
+              >
+                <div className="list-card-header">
+                  <span className="list-name">
+                    {isUuid(list.name)
+                      ? list.name.slice(0, 8) + "…"
+                      : list.name}{" "}
+                    <span className="list-count-inline">
+                      ({list.completed}/{list.total})
+                    </span>
                   </span>
-                </span>
-                <button
-                  className="btn-play"
-                  data-testid={`btn-play-${list.name}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleSpawnAll(list.name);
-                  }}
+                  <button
+                    className="btn-play"
+                    data-testid={`btn-play-${list.name}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleSpawnAll(list.name);
+                    }}
+                  >
+                    <ClawdIcon size={18} />
+                  </button>
+                </div>
+                <div
+                  className="progress-bar-bg"
+                  data-testid={`list-progress-${list.name}`}
                 >
-                  <ClawdIcon size={18} />
+                  <div
+                    className="progress-bar-fill"
+                    style={{ width: `${progressPercent(list)}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+
+          {activeTab === "named" &&
+            (showNewListInput ? (
+              <div className="list-card new-list-input-card">
+                <input
+                  data-testid="input-new-list-name"
+                  className="text-input"
+                  type="text"
+                  placeholder="List name (no spaces)..."
+                  value={newListName}
+                  onChange={(e) =>
+                    setNewListName(e.target.value.replace(/\s+/g, "-"))
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleCreateList();
+                    if (e.key === "Escape") {
+                      setShowNewListInput(false);
+                      setNewListName("");
+                    }
+                  }}
+                  autoFocus
+                />
+                <button className="btn-create" onClick={handleCreateList}>
+                  Create
                 </button>
               </div>
+            ) : (
               <div
-                className="progress-bar-bg"
-                data-testid={`list-progress-${list.name}`}
+                className="list-card new-list-card"
+                data-testid="btn-new-list"
+                onClick={() => setShowNewListInput(true)}
               >
-                <div
-                  className="progress-bar-fill"
-                  style={{ width: `${progressPercent(list)}%` }}
-                />
+                <span className="new-list-text">+ New List</span>
               </div>
-            </div>
-          ))}
+            ))}
 
-          {showNewListInput ? (
-            <div className="list-card new-list-input-card">
-              <input
-                data-testid="input-new-list-name"
-                className="text-input"
-                type="text"
-                placeholder="List name (no spaces)..."
-                value={newListName}
-                onChange={(e) =>
-                  setNewListName(e.target.value.replace(/\s+/g, "-"))
-                }
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") handleCreateList();
-                  if (e.key === "Escape") {
-                    setShowNewListInput(false);
-                    setNewListName("");
-                  }
-                }}
-                autoFocus
-              />
-              <button className="btn-create" onClick={handleCreateList}>
-                Create
-              </button>
-            </div>
-          ) : (
-            <div
-              className="list-card new-list-card"
-              data-testid="btn-new-list"
-              onClick={() => setShowNewListInput(true)}
-            >
-              <span className="new-list-text">+ New List</span>
-            </div>
-          )}
+          {activeTab === "unnamed" &&
+            lists.filter((l) => isUuid(l.name)).length === 0 && (
+              <div className="empty-state">No unnamed sessions</div>
+            )}
         </div>
 
         {/* Context Menu */}
@@ -399,7 +434,29 @@ function App() {
         >
           ←
         </button>
-        <span className="header-title">{screen.listName}</span>
+        {renaming ? (
+          <input
+            className="text-input header-rename-input"
+            data-testid="input-rename-list"
+            value={renameValue}
+            onChange={(e) =>
+              setRenameValue(e.target.value.replace(/\s+/g, "-"))
+            }
+            onKeyDown={async (e) => {
+              if (e.key === "Enter") {
+                await handleRenameList(screen.listName, renameValue);
+                setRenaming(false);
+              }
+              if (e.key === "Escape") {
+                setRenaming(false);
+              }
+            }}
+            onBlur={() => setRenaming(false)}
+            autoFocus
+          />
+        ) : (
+          <span className="header-title">{screen.listName}</span>
+        )}
         <div className="header-actions">
           <button
             className="btn-spawn"
@@ -421,6 +478,18 @@ function App() {
             </button>
             {showListMenu && (
               <div className="dropdown-menu" data-testid="list-dropdown-menu">
+                <div
+                  className="dropdown-item"
+                  data-testid="btn-rename-list"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowListMenu(false);
+                    setRenameValue(screen.listName);
+                    setRenaming(true);
+                  }}
+                >
+                  Rename
+                </div>
                 <div
                   className="dropdown-item danger"
                   data-testid="btn-delete-list"

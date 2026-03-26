@@ -380,13 +380,13 @@ test.describe("Phase 4: CRUD 검증", () => {
       await page.goto("http://localhost:1420");
       await page.waitForSelector('[data-testid="app-root"]');
 
-      // Header icon should be orange
-      const headerColor = await page.evaluate(() => {
-        const el = document.querySelector(".header-icon");
+      // Active tab should be orange
+      const tabColor = await page.evaluate(() => {
+        const el = document.querySelector(".tab-active");
         return el ? getComputedStyle(el).color : "";
       });
       // #DA7756 = rgb(218, 119, 86)
-      expect(headerColor).toMatch(/rgb\(\s*218,\s*119,\s*86\s*\)/);
+      expect(tabColor).toMatch(/rgb\(\s*218,\s*119,\s*86\s*\)/);
 
       // No purple in the CSS
       const allStyles = await page.evaluate(() => {

@@ -6,6 +6,10 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::sync::atomic::{AtomicBool, Ordering};
 
+// Global: last window position for Dock reopen
+static LAST_WINDOW_POS: std::sync::LazyLock<std::sync::Mutex<(i32, i32)>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new((0, 0)));
+
 fn uuid_v4() -> String {
     // Simple UUID v4 generation using system time + random-ish bits
     let now = SystemTime::now()
@@ -62,18 +66,6 @@ fn tasks_dir() -> PathBuf {
     home.join(".claude").join("tasks")
 }
 
-fn is_uuid(name: &str) -> bool {
-    // UUID format: 8-4-4-4-12 hex chars
-    let parts: Vec<&str> = name.split('-').collect();
-    if parts.len() != 5 {
-        return false;
-    }
-    let expected_lens = [8, 4, 4, 4, 12];
-    parts
-        .iter()
-        .zip(expected_lens.iter())
-        .all(|(part, &len)| part.len() == len && part.chars().all(|c| c.is_ascii_hexdigit()))
-}
 
 fn read_task_from_file(path: &PathBuf) -> Option<Task> {
     let content = fs::read_to_string(path).ok()?;
@@ -95,10 +87,6 @@ fn get_task_lists() -> Vec<TaskList> {
                 continue;
             }
             let name = path.file_name().unwrap().to_string_lossy().to_string();
-            // Filter UUID directories
-            if is_uuid(&name) {
-                continue;
-            }
 
             let mut tasks = vec![];
             if let Ok(files) = fs::read_dir(&path) {
@@ -259,6 +247,24 @@ fn delete_list(list_name: String) -> Result<(), String> {
     if dir.exists() {
         fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
     }
+    Ok(())
+}
+
+#[tauri::command]
+fn rename_list(old_name: String, new_name: String) -> Result<(), String> {
+    let sanitized = new_name.trim().replace(' ', "-");
+    if sanitized.is_empty() {
+        return Err("Name cannot be empty".to_string());
+    }
+    let old_dir = tasks_dir().join(&old_name);
+    let new_dir = tasks_dir().join(&sanitized);
+    if !old_dir.exists() {
+        return Err("List not found".to_string());
+    }
+    if new_dir.exists() {
+        return Err("A list with that name already exists".to_string());
+    }
+    fs::rename(&old_dir, &new_dir).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -506,6 +512,7 @@ pub fn run() {
             delete_task,
             create_list,
             delete_list,
+            rename_list,
             spawn_list,
             spawn_task,
             get_config,
@@ -522,12 +529,13 @@ pub fn run() {
             // Track whether we're in the process of toggling to avoid race conditions
             let toggling = std::sync::Arc::new(AtomicBool::new(false));
             let toggling_clone = toggling.clone();
+            // (window position tracked via LAST_WINDOW_POS global)
 
             // Load tray-specific icon (checkbox design for menu bar)
             let tray_icon_bytes = include_bytes!("../icons/tray-icon.png");
             let icon = tauri::image::Image::from_bytes(tray_icon_bytes)
                 .expect("failed to load tray icon");
-            let _tray = TrayIconBuilder::new()
+            let tray = TrayIconBuilder::new()
                 .icon(icon)
                 .icon_as_template(true)
                 .menu(&menu)
@@ -576,11 +584,17 @@ pub fn run() {
                                 // Place directly below tray icon
                                 let y = tray_y + tray_height;
 
+                                let pos_x = x as i32;
+                                let pos_y = y as i32;
                                 let _ = window.set_position(
-                                    tauri::PhysicalPosition::new(x as i32, y as i32),
+                                    tauri::PhysicalPosition::new(pos_x, pos_y),
                                 );
                                 let _ = window.show();
                                 let _ = window.set_focus();
+                                // Save position for Dock reopen
+                                if let Ok(mut pos) = LAST_WINDOW_POS.lock() {
+                                    *pos = (pos_x, pos_y);
+                                }
                                 // Record when window was shown
                                 if let Ok(mut t) = last_shown_clone.lock() {
                                     *t = Instant::now();
@@ -598,6 +612,24 @@ pub fn run() {
                     // Right-click is handled automatically by the menu
                 })
                 .build(app)?;
+
+            // Initialize window position from tray icon rect
+            if let Ok(Some(rect)) = tray.rect() {
+                let (tx, ty) = match rect.position {
+                    tauri::Position::Physical(p) => (p.x as f64, p.y as f64),
+                    tauri::Position::Logical(p) => (p.x, p.y),
+                };
+                let (tw, th) = match rect.size {
+                    tauri::Size::Physical(s) => (s.width as f64, s.height as f64),
+                    tauri::Size::Logical(s) => (s.width, s.height),
+                };
+                let win_width = 380.0;
+                let x = (tx + (tw / 2.0) - (win_width / 2.0)) as i32;
+                let y = (ty + th) as i32;
+                if let Ok(mut pos) = LAST_WINDOW_POS.lock() {
+                    *pos = (x, y);
+                }
+            }
 
             // Listen for window focus lost → auto-hide
             let app_handle_for_focus = app.handle().clone();
@@ -636,6 +668,23 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // Handle Dock icon click (reopen)
+            if let tauri::RunEvent::Reopen { .. } = event {
+                if let Some(window) = app.get_webview_window("main") {
+                    // Use saved tray position
+                    if let Ok(pos) = LAST_WINDOW_POS.lock() {
+                        if pos.0 != 0 || pos.1 != 0 {
+                            let _ = window.set_position(
+                                tauri::PhysicalPosition::new(pos.0, pos.1),
+                            );
+                        }
+                    }
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+        });
 }

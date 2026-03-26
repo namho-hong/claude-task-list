@@ -416,6 +416,43 @@ body {
   padding: 0 16px 6px;
 }
 
+/* Tab bar */
+.tab-bar {
+  display: flex;
+  padding: 0 16px;
+  gap: 16px;
+}
+
+.tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: rgba(255, 255, 255, 0.35);
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  padding: 8px 0 6px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.tab:hover {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.tab-active {
+  color: #DA7756;
+  border-bottom-color: #DA7756;
+}
+
+/* Header rename input */
+.header-rename-input {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 2px 6px;
+}
+
 /* Empty state */
 .empty-state {
   text-align: center;
