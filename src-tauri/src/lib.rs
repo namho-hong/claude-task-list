@@ -117,7 +117,7 @@ fn get_task_lists() -> Vec<TaskList> {
 
                         let file_name = file_path.file_stem().unwrap().to_string_lossy();
                         // Skip guard task (0.json)
-                        if file_name == "0" {
+                        if file_name == "0" || file_name == "999" {
                             continue;
                         }
                         if let Some(task) = read_task_from_file(&file_path) {
@@ -196,7 +196,21 @@ fn create_task(list_name: String, subject: String) -> Result<Task, String> {
         return Err("List not found".to_string());
     }
 
-    // Find max ID
+    // Ensure guard task (999.json) exists
+    let guard_path = dir.join("999.json");
+    if !guard_path.exists() {
+        let guard = serde_json::json!({
+            "id": "999",
+            "subject": "Do Not Complete This Task",
+            "description": "This is a guard task to prevent the task list from being auto-deleted when all other tasks are completed. Do NOT mark this task as completed.",
+            "status": "pending",
+            "blocks": [],
+            "blockedBy": []
+        });
+        let _ = fs::write(&guard_path, serde_json::to_string_pretty(&guard).unwrap_or_default());
+    }
+
+    // Find max ID (exclude 999 guard)
     let mut max_id: u64 = 0;
     if let Ok(files) = fs::read_dir(&dir) {
         for file in files.flatten() {
@@ -204,7 +218,7 @@ fn create_task(list_name: String, subject: String) -> Result<Task, String> {
             if file_path.extension().map_or(false, |e| e == "json") {
                 if let Some(stem) = file_path.file_stem() {
                     if let Ok(id) = stem.to_string_lossy().parse::<u64>() {
-                        if id > max_id {
+                        if id != 999 && id > max_id {
                             max_id = id;
                         }
                     }
@@ -245,22 +259,8 @@ fn create_list(list_name: String) -> Result<(), String> {
     let dir = tasks_dir().join(&list_name);
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 
-    // Create guard task (0.json) - compatible with tasklist plugin
-    // Status must be "pending" (tasklist plugin expects this)
-    let guard = serde_json::json!({
-        "id": "0",
-        "subject": "Do Not Complete This Task",
-        "description": "This is a guard task to prevent the task list from being auto-deleted when all other tasks are completed. Do NOT mark this task as completed.",
-        "status": "pending",
-        "blocks": [],
-        "blockedBy": []
-    });
-
-    let guard_path = dir.join("0.json");
-    if !guard_path.exists() {
-        let content = serde_json::to_string_pretty(&guard).map_err(|e| e.to_string())?;
-        fs::write(&guard_path, content).map_err(|e| e.to_string())?;
-    }
+    // Guard task is created lazily in create_task (999.json)
+    // Not needed at list creation time
 
     Ok(())
 }
