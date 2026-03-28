@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "claude-task-list",
-  "version": "0.1.0",
-  "identifier": "com.dan.claude-task-list",
+  "productName": "claude-task-list-app",
+  "version": "0.3.0",
+  "identifier": "com.dan.claude-task-list-app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -46,6 +46,9 @@
     ],
     "macOS": {
       "frameworks": [],
+      "files": {
+        "Resources/Assets.car": "./gen/macos/Assets.car"
+      },
       "minimumSystemVersion": "",
       "signingIdentity": null
     }

@@ -2,9 +2,9 @@ use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use std::sync::atomic::{AtomicBool, Ordering};
 
 // Global: last window position for Dock reopen
 static LAST_WINDOW_POS: std::sync::LazyLock<std::sync::Mutex<(i32, i32)>> =
@@ -24,7 +24,12 @@ fn uuid_v4() -> String {
     let f = (seed.wrapping_mul(6364136223846793005).wrapping_add(1)) as u64;
     format!(
         "{:08x}-{:04x}-{:04x}-{:02x}{:02x}-{:012x}",
-        a, b, c, d, e, f & 0xFFFFFFFFFFFF
+        a,
+        b,
+        c,
+        d,
+        e,
+        f & 0xFFFFFFFFFFFF
     )
 }
 use tauri::{
@@ -68,10 +73,33 @@ fn tasks_dir() -> PathBuf {
     home.join(".claude").join("tasks")
 }
 
-
 fn read_task_from_file(path: &PathBuf) -> Option<Task> {
     let content = fs::read_to_string(path).ok()?;
     serde_json::from_str(&content).ok()
+}
+
+fn workspace_dir(list_name: &str) -> PathBuf {
+    let home = dirs::home_dir().expect("Cannot find home directory");
+    home.join("claude-task-list").join(list_name)
+}
+
+fn read_project_dir(list_name: &str) -> Option<String> {
+    let meta_path = tasks_dir().join(list_name).join("_meta.json");
+    if meta_path.exists() {
+        let content = fs::read_to_string(&meta_path).ok()?;
+        let val: serde_json::Value = serde_json::from_str(&content).ok()?;
+        val.get("project_dir").and_then(|v| v.as_str()).map(|s| s.to_string())
+    } else {
+        None
+    }
+}
+
+fn write_project_dir(list_name: &str, project_dir: &str) -> Result<(), String> {
+    let meta_path = tasks_dir().join(list_name).join("_meta.json");
+    let meta = serde_json::json!({ "project_dir": project_dir });
+    let content = serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?;
+    fs::write(&meta_path, content).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -116,8 +144,8 @@ fn get_task_lists() -> Vec<TaskList> {
                         }
 
                         let file_name = file_path.file_stem().unwrap().to_string_lossy();
-                        // Skip guard task (0.json)
-                        if file_name == "0" || file_name == "999" {
+                        // Skip guard task and metadata
+                        if file_name == "0" || file_name == "999" || file_name == "_meta" {
                             continue;
                         }
                         if let Some(task) = read_task_from_file(&file_path) {
@@ -157,7 +185,7 @@ fn get_tasks(list_name: String) -> Vec<Task> {
             let file_path = file.path();
             if file_path.extension().map_or(false, |e| e == "json") {
                 let file_name = file_path.file_stem().unwrap().to_string_lossy();
-                if file_name == "0" || file_name == "999" {
+                if file_name == "0" || file_name == "999" || file_name == "_meta" {
                     continue;
                 }
                 if let Some(task) = read_task_from_file(&file_path) {
@@ -171,7 +199,11 @@ fn get_tasks(list_name: String) -> Vec<Task> {
 }
 
 #[tauri::command]
-fn update_task_status(list_name: String, task_id: String, new_status: String) -> Result<(), String> {
+fn update_task_status(
+    list_name: String,
+    task_id: String,
+    new_status: String,
+) -> Result<(), String> {
     let dir = tasks_dir().join(&list_name);
     let file_path = dir.join(format!("{}.json", task_id));
 
@@ -207,7 +239,10 @@ fn create_task(list_name: String, subject: String) -> Result<Task, String> {
             "blocks": [],
             "blockedBy": []
         });
-        let _ = fs::write(&guard_path, serde_json::to_string_pretty(&guard).unwrap_or_default());
+        let _ = fs::write(
+            &guard_path,
+            serde_json::to_string_pretty(&guard).unwrap_or_default(),
+        );
     }
 
     // Find max ID (exclude 999 guard)
@@ -247,7 +282,9 @@ fn create_task(list_name: String, subject: String) -> Result<Task, String> {
 
 #[tauri::command]
 fn delete_task(list_name: String, task_id: String) -> Result<(), String> {
-    let file_path = tasks_dir().join(&list_name).join(format!("{}.json", task_id));
+    let file_path = tasks_dir()
+        .join(&list_name)
+        .join(format!("{}.json", task_id));
     if file_path.exists() {
         fs::remove_file(&file_path).map_err(|e| e.to_string())?;
     }
@@ -259,8 +296,12 @@ fn create_list(list_name: String) -> Result<(), String> {
     let dir = tasks_dir().join(&list_name);
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 
-    // Guard task is created lazily in create_task (999.json)
-    // Not needed at list creation time
+    // Create workspace directory + _meta.json for named lists
+    if !is_uuid(&list_name) {
+        let ws = workspace_dir(&list_name);
+        fs::create_dir_all(&ws).map_err(|e| e.to_string())?;
+        write_project_dir(&list_name, &ws.to_string_lossy())?;
+    }
 
     Ok(())
 }
@@ -288,7 +329,29 @@ fn rename_list(old_name: String, new_name: String) -> Result<(), String> {
     if new_dir.exists() {
         return Err("A list with that name already exists".to_string());
     }
+
+    // Capture project_dir before rename
+    let project_dir = if is_uuid(&old_name) {
+        // UUID → Named: try to get project dir from session JSONL
+        find_session_project_dir(&old_name)
+    } else {
+        // Named → Named: read existing _meta.json
+        read_project_dir(&old_name)
+    };
+
     fs::rename(&old_dir, &new_dir).map_err(|e| e.to_string())?;
+
+    // Write _meta.json with captured or new project_dir
+    match project_dir {
+        Some(dir) => write_project_dir(&sanitized, &dir)?,
+        None => {
+            // No existing dir info: create new workspace
+            let ws = workspace_dir(&sanitized);
+            fs::create_dir_all(&ws).map_err(|e| e.to_string())?;
+            write_project_dir(&sanitized, &ws.to_string_lossy())?;
+        }
+    }
+
     Ok(())
 }
 
@@ -468,7 +531,7 @@ fn spawn_list(list_name: String) -> Result<(), String> {
     if is_uuid(&list_name) {
         // Unnamed session: resume in the original project directory
         if let Some(project_dir) = find_session_project_dir(&list_name) {
-            let command = format!("cd {} && claude --resume {}", project_dir, list_name);
+            let command = format!("cd \"{}\" && claude --resume {}", project_dir, list_name);
             return spawn_in_terminal(&command);
         }
         // Fallback: just use task list ID
@@ -476,14 +539,28 @@ fn spawn_list(list_name: String) -> Result<(), String> {
         return spawn_in_terminal(&command);
     }
 
-    let command = format!("CLAUDE_CODE_TASK_LIST_ID={} claude", list_name);
-    spawn_in_terminal(&command)
+    // Named list: use _meta.json project_dir
+    if let Some(project_dir) = read_project_dir(&list_name) {
+        // Re-create directory if it was deleted
+        let _ = fs::create_dir_all(&project_dir);
+        let command = format!(
+            "cd \"{}\" && CLAUDE_CODE_TASK_LIST_ID={} claude",
+            project_dir, list_name
+        );
+        spawn_in_terminal(&command)
+    } else {
+        // Fallback: no _meta.json (legacy list)
+        let command = format!("CLAUDE_CODE_TASK_LIST_ID={} claude", list_name);
+        spawn_in_terminal(&command)
+    }
 }
 
 #[tauri::command]
 fn spawn_task(list_name: String, task_id: String) -> Result<(), String> {
     // Read task JSON
-    let task_path = tasks_dir().join(&list_name).join(format!("{}.json", task_id));
+    let task_path = tasks_dir()
+        .join(&list_name)
+        .join(format!("{}.json", task_id));
     let mut task: serde_json::Value = if task_path.exists() {
         let content = fs::read_to_string(&task_path).map_err(|e| e.to_string())?;
         serde_json::from_str(&content).map_err(|e| e.to_string())?
@@ -498,12 +575,24 @@ fn spawn_task(list_name: String, task_id: String) -> Result<(), String> {
         .and_then(|s| s.as_str())
         .map(|s| s.to_string());
 
+    // Resolve project directory for cd prefix
+    let cd_prefix = if !is_uuid(&list_name) {
+        if let Some(project_dir) = read_project_dir(&list_name) {
+            let _ = fs::create_dir_all(&project_dir);
+            format!("cd \"{}\" && ", project_dir)
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+
     if status == "in_progress" && existing_session_id.is_some() {
         // Resume existing session
         let session_id = existing_session_id.unwrap();
         let command = format!(
-            "CLAUDE_CODE_TASK_LIST_ID={} claude --resume {}",
-            list_name, session_id
+            "{}CLAUDE_CODE_TASK_LIST_ID={} claude --resume {}",
+            cd_prefix, list_name, session_id
         );
         spawn_in_terminal(&command)
     } else {
@@ -531,8 +620,8 @@ fn spawn_task(list_name: String, task_id: String) -> Result<(), String> {
 
         let escaped = prompt.replace('\'', "'\\''");
         let command = format!(
-            "CLAUDE_CODE_TASK_LIST_ID={} claude --session-id {} $'{}'",
-            list_name, session_id, escaped
+            "{}CLAUDE_CODE_TASK_LIST_ID={} claude --session-id {} $'{}'",
+            cd_prefix, list_name, session_id, escaped
         );
         spawn_in_terminal(&command)
     }
@@ -614,12 +703,17 @@ pub fn run() {
             set_terminal,
         ])
         .setup(|app| {
+            // Note: macOS Tahoe dark icon style darkens the Dock icon.
+            // Icon has white checkmark on orange bg so it's still visible in dark mode.
+
             // Setup system tray
             let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
             let menu = MenuBuilder::new(app).item(&quit).build()?;
 
             // Track the last time the window was shown to prevent premature hiding
-            let last_shown = std::sync::Arc::new(std::sync::Mutex::new(Instant::now() - Duration::from_secs(10)));
+            let last_shown = std::sync::Arc::new(std::sync::Mutex::new(
+                Instant::now() - Duration::from_secs(10),
+            ));
             let last_shown_clone = last_shown.clone();
             // Track whether we're in the process of toggling to avoid race conditions
             let toggling = std::sync::Arc::new(AtomicBool::new(false));
@@ -628,8 +722,8 @@ pub fn run() {
 
             // Load tray-specific icon (checkbox design for menu bar)
             let tray_icon_bytes = include_bytes!("../icons/tray-icon.png");
-            let icon = tauri::image::Image::from_bytes(tray_icon_bytes)
-                .expect("failed to load tray icon");
+            let icon =
+                tauri::image::Image::from_bytes(tray_icon_bytes).expect("failed to load tray icon");
             let tray = TrayIconBuilder::new()
                 .icon(icon)
                 .icon_as_template(true)
@@ -669,10 +763,8 @@ pub fn run() {
                                 };
 
                                 // Get window size
-                                let win_width = window
-                                    .outer_size()
-                                    .map(|s| s.width as f64)
-                                    .unwrap_or(380.0);
+                                let win_width =
+                                    window.outer_size().map(|s| s.width as f64).unwrap_or(380.0);
 
                                 // Center window horizontally under tray icon
                                 let x = tray_x + (tray_width / 2.0) - (win_width / 2.0);
@@ -681,9 +773,8 @@ pub fn run() {
 
                                 let pos_x = x as i32;
                                 let pos_y = y as i32;
-                                let _ = window.set_position(
-                                    tauri::PhysicalPosition::new(pos_x, pos_y),
-                                );
+                                let _ =
+                                    window.set_position(tauri::PhysicalPosition::new(pos_x, pos_y));
                                 let _ = window.show();
                                 let _ = window.set_focus();
                                 // Save position for Dock reopen
@@ -772,9 +863,7 @@ pub fn run() {
                     // Use saved tray position
                     if let Ok(pos) = LAST_WINDOW_POS.lock() {
                         if pos.0 != 0 || pos.1 != 0 {
-                            let _ = window.set_position(
-                                tauri::PhysicalPosition::new(pos.0, pos.1),
-                            );
+                            let _ = window.set_position(tauri::PhysicalPosition::new(pos.0, pos.1));
                         }
                     }
                     let _ = window.show();

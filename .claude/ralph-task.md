@@ -1,59 +1,111 @@
-# Task: Claude Task List 메뉴바 앱 수정 (Tauri v2 + React)
+# Task: Named/Unnamed 탭 + Rename 기능 (Round 6)
 
 프로젝트 경로: /Users/dan/claude-task-list
+기술 스택: Tauri v2 (Rust) + React 19 + TypeScript + Tailwind CSS 4
+실행 방법: `cargo tauri dev` (cargo build 단독 사용 금지)
+브랜드 컬러: #DA7756 (Claude Code 오렌지)
 
-## Phase 1: 창 위치 및 클릭 로직 정리
-1. 좌클릭 시 tray icon 바로 아래에 팝업 창이 열리도록 위치 계산 구현
-   - tray icon의 screen 좌표를 기반으로 window position 설정
-   - 창이 메뉴바에 딱 붙어서 열려야 함
-2. 클릭 로직 race condition 해결
-   - 좌클릭: 팝업 토글 (열기/닫기)만 담당
-   - 우클릭: Quit 메뉴 표시
-   - 좌클릭과 우클릭 간 간섭 제거, 일관된 동작 보장
+## 배경
 
-## Phase 2: 포커스 해제 시 자동 닫힘
-- 창이 포커스를 잃으면 자동으로 숨김 처리
-- Tauri window의 blur/focus-lost 이벤트 활용
-- tray icon 클릭으로 다시 열 수 있어야 함
+현재 get_task_lists에서 UUID 형식 디렉토리는 필터링하고 있음 (is_uuid 함수).
+Unnamed(UUID) 리스트도 볼 수 있도록 탭 시스템을 추가.
 
-## Phase 3: 글래스모피즘 제대로 구현
-- 현재 CSS backdrop-filter + rgba opacity 방식은 뒤가 너무 보임
-- 웹 리서치를 통해 Tauri v2에서 macOS 네이티브 vibrancy 또는 적절한 글래스모피즘 구현 방법을 조사
-- NSVisualEffectView, window_vibrancy crate, 또는 Tauri의 built-in vibrancy 옵션 등을 검토
-- 뒤의 앱 글자가 읽히지 않을 정도의 적절한 blur 수준 적용
-- 리서치 결과에 따라 최적의 방법으로 구현
+## Phase 1: Rust 백엔드 수정
 
-## 검증 방법
+### 1-A: get_task_lists 수정
+- UUID 디렉토리를 필터링하지 않고 전부 반환
+- TaskList 구조체에 `is_named: bool` 필드 추가 (UUID가 아니면 named)
+- 또는 프론트엔드에서 UUID 판별해도 됨
 
-### E2E 테스트 (Playwright + macOS Accessibility)
-스크립트 단위 테스트가 아닌, 실제 유저와 동일한 레벨의 인터페이스 테스트를 작성하라.
-프로젝트에 이미 Playwright(1.58.2)가 설치되어 있다.
+### 1-B: rename_list 커맨드 추가
+- `rename_list(old_name: String, new_name: String) -> Result<(), String>`
+- `~/.claude/tasks/{old_name}` 디렉토리를 `~/.claude/tasks/{new_name}`으로 rename
+- new_name에 공백 포함 시 하이픈으로 치환
+- 이미 존재하는 이름이면 에러 반환
+- invoke_handler에 등록
 
-1. **네이티브 tray 동작 검증**
-   - macOS Accessibility API 또는 AppleScript(`osascript`)를 활용하여 실제 tray icon에 좌클릭/우클릭 이벤트를 보내고 결과를 확인
-   - 좌클릭 -> 창이 tray icon 바로 아래 위치에 열림 (좌표 검증)
-   - 좌클릭 다시 -> 창 닫힘
-   - 우클릭 -> Quit 메뉴만 표시
-   - 좌/우클릭 연속 시 race condition 없음
+## Phase 2: 프론트엔드 탭 시스템
 
-2. **포커스 해제 검증**
-   - 다른 앱 활성화 또는 데스크탑 클릭 시뮬레이션
-   - 창이 자동으로 닫히는지 확인
+### 2-A: Screen 1 탭 UI
+헤더 아래, 리스트 위에 탭 바 추가:
 
-3. **WebView UI 검증 (Playwright)**
-   - 앱을 실행한 상태에서 Playwright로 WebView에 연결
-   - 태스크 CRUD, 상태 변경, spawn 버튼 등 기존 기능 정상 동작 확인
+```
+┌──────────────────────────────────┐
+│ 🤖 Claude Task List          ⚙  │
+├──────────────────────────────────┤
+│  Named        Unnamed            │
+│  ━━━━━                           │
+├──────────────────────────────────┤
+│  (리스트 카드들...)               │
+└──────────────────────────────────┘
+```
 
-4. **글래스모피즘 시각 검증**
-   - 스크린샷 캡처 후 배경 앱의 텍스트가 읽히지 않는 수준인지 확인
-   - 이전/이후 스크린샷 비교
+구현:
+- `activeTab` state: "named" | "unnamed"
+- 탭 클릭 시 전환
+- 활성 탭에 밑줄(underline) 표시
+- 탭 바는 헤더와 divider 사이에 배치
 
-### 빌드 검증
-- 매 iteration마다 `cargo build` 성공 확인
+### 2-B: Named 탭
+- 기존과 동일: 이름이 UUID가 아닌 리스트만 표시
+- 카드: 이름 (진척률) + hover 시 Clawd Spawn 버튼
+- "+ New List" 버튼 하단에 표시
+
+### 2-C: Unnamed 탭
+- UUID 형식 이름을 가진 리스트만 표시
+- UUID 표시: 화면 너비에 맞게 적절히 축약 (앞 8자리 + "..." 등 — 렌더링 보고 판단)
+- 카드: UUID (진척률) + hover 시 Clawd Spawn 버튼
+- "+ New List" 버튼 없음
+
+### 2-D: UUID 판별
+프론트엔드에서 is_uuid 판별 (Rust의 is_uuid와 동일 로직):
+- 8-4-4-4-12 hex 패턴
+- `const isUuid = (name: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(name)`
+
+## Phase 3: Rename 기능
+
+### 3-A: Screen 2 ⋯ 메뉴에 "Rename" 추가
+- Unnamed 리스트의 Screen 2 진입 시 ⋯ 메뉴에 "Rename" 옵션 추가
+- Named 리스트에도 Rename 있어도 됨 (이름 변경)
+- "Delete List" 옵션은 유지
+
+### 3-B: Rename UI
+- "Rename" 클릭 시 → 인라인 입력 또는 프롬프트로 새 이름 입력
+- 가장 간단한 방법: 헤더의 리스트 이름 부분이 input으로 변환
+- Enter로 확정, Escape로 취소
+- 공백 → 하이픈 자동 치환
+- rename_list invoke 호출 후 loadLists + screen 업데이트
+
+## Phase 4: 커밋 전 정리
+
+- 기존 E2E 테스트가 UUID 필터링에 의존하면 업데이트
+- 새 탭 관련 E2E 테스트 추가
+- screencapture로 Named 탭, Unnamed 탭 각각 확인
+
+## 작업 방식
+
+1. 코드 수정
+2. cargo tauri dev 자동 리빌드
+3. Playwright + screencapture 검증
+4. 실패 시 수정 반복
+5. 이전 iteration 작업은 git diff로 확인
+
+## 검증 기준
+
+- [ ] Named 탭: 기존처럼 이름 있는 리스트만 표시
+- [ ] Unnamed 탭: UUID 리스트 표시 (적절히 축약)
+- [ ] 탭 전환이 정상 동작
+- [ ] Unnamed 리스트에도 Clawd Spawn 버튼 (hover)
+- [ ] Unnamed 탭에 "+ New List" 없음
+- [ ] ⋯ → Rename 클릭 → 이름 입력 → 디렉토리 rename 성공
+- [ ] Rename 후 Named 탭으로 이동 + 리스트 갱신
+- [ ] rename_list Rust 커맨드 동작
+- [ ] 기존 E2E 테스트 통과
+- [ ] screencapture 시각적 확인
+
+## Stuck 대응
+
+10 iteration 이후 미완료 시 .claude/ralph-stuck.md에 기록
 
 ## 완료 조건
-- 모든 E2E 테스트 통과
-- 빌드 성공
-- 기존 기능 정상 동작
-위 조건을 모두 충족했을 때만 completion promise를 출력하라.
-하나라도 미충족이면 다음 iteration에서 계속 수정하라.
+위 검증 기준을 모두 충족했을 때만 completion promise를 출력하라.
