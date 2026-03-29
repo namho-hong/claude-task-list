@@ -82,8 +82,9 @@ body {
   transition: background 0.15s ease;
 }
 
-.list-card:hover {
-  background: rgba(255, 255, 255, 0.1);
+.list-card.focused {
+  background: rgba(218, 119, 86, 0.15);
+  border-color: rgba(218, 119, 86, 0.4);
 }
 
 .list-card:active {
@@ -125,7 +126,7 @@ body {
   line-height: 0;
 }
 
-.list-card:hover .btn-play {
+.list-card.focused .btn-play {
   opacity: 1;
 }
 
@@ -343,8 +344,11 @@ body {
   transition: background 0.1s;
 }
 
-.task-item:hover {
-  background: rgba(255, 255, 255, 0.05);
+.task-item.focused {
+  background: rgba(218, 119, 86, 0.15);
+  outline: 1px solid rgba(218, 119, 86, 0.4);
+  outline-offset: -1px;
+  border-radius: 8px;
 }
 
 .task-completed {
@@ -410,6 +414,18 @@ body {
   flex: 1;
 }
 
+.task-edit-input {
+  font-size: 13px;
+  flex: 1;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(218, 119, 86, 0.5);
+  border-radius: 4px;
+  padding: 2px 6px;
+  color: #f0f0f0;
+  font-family: inherit;
+  outline: none;
+}
+
 /* Section headers */
 .section-header {
   font-size: 11px;
@@ -436,7 +452,7 @@ body {
   flex-shrink: 0;
 }
 
-.task-item:hover .btn-spawn-task {
+.task-item.focused .btn-spawn-task {
   opacity: 1;
 }
 

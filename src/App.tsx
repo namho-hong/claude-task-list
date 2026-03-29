@@ -80,7 +80,20 @@ function App() {
   const [renameValue, setRenameValue] = useState("");
   const [renamingCard, setRenamingCard] = useState<string | null>(null);
   const [cardRenameValue, setCardRenameValue] = useState("");
+  const [focusedIndex, setFocusedIndex] = useState(0);
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [editingTaskValue, setEditingTaskValue] = useState("");
+  const focusTooltipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mouseSuppressionRef = useRef(false);
   const listMenuRef = useRef<HTMLDivElement>(null);
+
+  // Shared filter: named vs unnamed (unnamed excludes empty sessions)
+  const getVisibleLists = useCallback(() => {
+    const byTab = lists.filter((list) =>
+      activeTab === "named" ? !isUuid(list.name) : isUuid(list.name)
+    );
+    return activeTab === "unnamed" ? byTab.filter((l) => l.total > 0) : byTab;
+  }, [lists, activeTab]);
 
   const loadLists = useCallback(async () => {
     try {
@@ -115,6 +128,15 @@ function App() {
     };
   }, [loadLists]);
 
+  // Re-enable mouse focus on real mouse movement
+  useEffect(() => {
+    const handleMouseMove = () => {
+      mouseSuppressionRef.current = false;
+    };
+    document.addEventListener("mousemove", handleMouseMove);
+    return () => document.removeEventListener("mousemove", handleMouseMove);
+  }, []);
+
   // Close context menu on outside click
   useEffect(() => {
     const handleClick = () => {
@@ -127,6 +149,194 @@ function App() {
       window.removeEventListener("click", handleClick);
     };
   }, []);
+
+  // Reset focusedIndex on screen change or tab change
+  useEffect(() => {
+    setFocusedIndex(0);
+    setEditingTaskId(null);
+  }, [screen, activeTab]);
+
+  // Focus change: dismiss tooltips, scroll into view, re-show tooltip after 1s dwell
+  useEffect(() => {
+    // Dismiss any existing tooltip/preview
+    setTooltip(null);
+    setListPreview(null);
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    if (focusTooltipTimerRef.current) clearTimeout(focusTooltipTimerRef.current);
+
+    // Scroll focused item into view (slight delay so highlight paints first)
+    const scrollTimer = setTimeout(() => {
+    if (screen.type === "listlist") {
+      const filtered = getVisibleLists();
+      const list = filtered[focusedIndex];
+      if (list) {
+        document.querySelector(`[data-testid="list-card-${list.name}"]`)
+          ?.scrollIntoView({ block: "nearest" });
+      }
+    } else if (screen.type === "tasklist") {
+      const currentList = lists.find((l) => l.name === screen.listName);
+      const tasks = [...(currentList?.tasks || [])].sort(
+        (a, b) =>
+          (STATUS_ORDER[a.status] ?? 1) - (STATUS_ORDER[b.status] ?? 1) ||
+          Number(a.id) - Number(b.id)
+      );
+      const statusOrder2 = ["in_progress", "pending", "completed"];
+      const flatTasks2 = statusOrder2.flatMap((s) =>
+        tasks.filter((t) => t.status === s)
+      );
+      const task = flatTasks2[focusedIndex];
+      if (task) {
+        document.querySelector(`[data-testid="task-item-${task.id}"]`)
+          ?.scrollIntoView({ block: "nearest" });
+      }
+    }
+    }, 50);
+
+    // Start 1s timer for focused item tooltip
+    focusTooltipTimerRef.current = setTimeout(() => {
+      if (screen.type === "tasklist") {
+        const currentList = lists.find((l) => l.name === screen.listName);
+        const tasks = [...(currentList?.tasks || [])].sort(
+          (a, b) =>
+            (STATUS_ORDER[a.status] ?? 1) - (STATUS_ORDER[b.status] ?? 1) ||
+            Number(a.id) - Number(b.id)
+        );
+        const statusOrder = ["in_progress", "pending", "completed"];
+        const flatTasks = statusOrder.flatMap((s) =>
+          tasks.filter((t) => t.status === s)
+        );
+        const task = flatTasks[focusedIndex];
+        if (task?.description) {
+          const el = document.querySelector(`[data-testid="task-item-${task.id}"]`);
+          if (el) {
+            const rect = el.getBoundingClientRect();
+            setTooltip({
+              id: task.id,
+              text: task.description,
+              x: rect.left,
+              y: rect.bottom + 4,
+            });
+          }
+        }
+      } else if (screen.type === "listlist") {
+        const filtered = getVisibleLists();
+        const list = filtered[focusedIndex];
+        if (list && list.total > 0) {
+          const el = document.querySelector(`[data-testid="list-card-${list.name}"]`);
+          if (el) {
+            const rect = el.getBoundingClientRect();
+            const estimatedHeight = Math.min(list.total, 8) * 20 + 24;
+            const spaceBelow = window.innerHeight - rect.bottom;
+            const above = spaceBelow < estimatedHeight + 8;
+            const y = above ? rect.top - 4 : rect.bottom + 4;
+            setListPreview({ name: list.name, x: rect.left, y, above });
+          }
+        }
+      }
+    }, 1000);
+
+    return () => {
+      clearTimeout(scrollTimer);
+      if (focusTooltipTimerRef.current) clearTimeout(focusTooltipTimerRef.current);
+    };
+  }, [focusedIndex, screen, activeTab, lists]);
+
+  // Keyboard navigation
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      // Skip if an input/textarea/select is focused
+      const tag = (document.activeElement?.tagName || "").toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select") {
+        return;
+      }
+
+      // Skip if editing task inline
+      if (editingTaskId) return;
+
+      if (screen.type === "listlist") {
+        // Tab and Escape work regardless of list count
+        if (e.key === "Tab") {
+          e.preventDefault();
+          setActiveTab((prev) => (prev === "named" ? "unnamed" : "named"));
+          return;
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          invoke("hide_window").catch(() => {});
+          return;
+        }
+
+        const filtered = getVisibleLists();
+        const count = filtered.length;
+        if (count === 0) return;
+
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          mouseSuppressionRef.current = true;
+          setFocusedIndex((prev) => (prev + 1) % count);
+        } else if (e.key === "ArrowUp") {
+          e.preventDefault();
+          mouseSuppressionRef.current = true;
+          setFocusedIndex((prev) => (prev - 1 + count) % count);
+        } else if (e.key === "Enter" && e.metaKey) {
+          e.preventDefault();
+          const list = filtered[focusedIndex];
+          if (list) {
+            handleSpawnAll(list.name);
+            invoke("hide_window").catch(() => {});
+          }
+        } else if (e.key === "Enter") {
+          e.preventDefault();
+          const list = filtered[focusedIndex];
+          if (list) {
+            setScreen({ type: "tasklist", listName: list.name });
+          }
+        }
+      } else if (screen.type === "tasklist") {
+        // Need allTasks from groups - compute inline
+        const currentList = lists.find((l) => l.name === screen.listName);
+        const tasks = [...(currentList?.tasks || [])].sort(
+          (a, b) =>
+            (STATUS_ORDER[a.status] ?? 1) - (STATUS_ORDER[b.status] ?? 1) ||
+            Number(a.id) - Number(b.id)
+        );
+        const statusOrder = ["in_progress", "pending", "completed"];
+        const flatTasks = statusOrder.flatMap((s) =>
+          tasks.filter((t) => t.status === s)
+        );
+        const count = flatTasks.length;
+
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          mouseSuppressionRef.current = true;
+          if (count > 0) setFocusedIndex((prev) => (prev + 1) % count);
+        } else if (e.key === "ArrowUp") {
+          e.preventDefault();
+          mouseSuppressionRef.current = true;
+          if (count > 0) setFocusedIndex((prev) => (prev - 1 + count) % count);
+        } else if (e.key === "Enter") {
+          e.preventDefault();
+          const task = flatTasks[focusedIndex];
+          if (task) {
+            handleSpawnTask(screen.listName, task.id);
+            invoke("hide_window").catch(() => {});
+          }
+        } else if (e.key === "F2") {
+          e.preventDefault();
+          const task = flatTasks[focusedIndex];
+          if (task) {
+            setEditingTaskId(task.id);
+            setEditingTaskValue(task.subject);
+          }
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          setScreen({ type: "listlist" });
+        }
+      }
+    };
+
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [screen, activeTab, lists, focusedIndex, editingTaskId]);
 
   const handleSetTerminal = async (value: string) => {
     setTerminal(value);
@@ -290,19 +500,19 @@ function App() {
           setListPreview(null);
         }}>
           {(() => {
-            const filtered = lists.filter((list) =>
-              activeTab === "named" ? !isUuid(list.name) : isUuid(list.name)
-            );
+            const filtered = getVisibleLists();
 
-            const renderCard = (list: TaskList, showSpawn = true) => (
+            const renderCard = (list: TaskList, showSpawn = true, idx = -1) => (
               <div
                 key={list.name}
-                className="list-card"
+                className={`list-card${screen.type === "listlist" && idx === focusedIndex ? " focused" : ""}`}
                 data-testid={`list-card-${list.name}`}
                 onClick={() =>
                   setScreen({ type: "tasklist", listName: list.name })
                 }
                 onMouseEnter={(e) => {
+                  if (mouseSuppressionRef.current) return;
+                  if (idx >= 0) setFocusedIndex(idx);
                   if (list.total > 0) {
                     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
                     hoverTimerRef.current = setTimeout(() => {
@@ -394,9 +604,9 @@ function App() {
                     className="list-project-dir clickable"
                     onClick={async (e) => {
                       e.stopPropagation();
-                      const selected = await invoke<string | null>("pick_directory", { defaultPath: list.projectDir });
-                      if (selected && selected !== list.projectDir) {
-                        await invoke("set_project_dir", { listName: list.name, projectDir: selected });
+                      const picked = await invoke<string | null>("pick_directory", { defaultPath: list.projectDir });
+                      if (picked && picked !== list.projectDir) {
+                        await invoke("set_project_dir", { listName: list.name, projectDir: picked });
                         await loadLists();
                       }
                     }}
@@ -408,9 +618,9 @@ function App() {
                     className="btn-set-project-dir"
                     onClick={async (e) => {
                       e.stopPropagation();
-                      const selected = await invoke<string | null>("pick_directory", { defaultPath: null });
-                      if (selected) {
-                        await invoke("set_project_dir", { listName: list.name, projectDir: selected });
+                      const picked = await invoke<string | null>("pick_directory", { defaultPath: null });
+                      if (picked) {
+                        await invoke("set_project_dir", { listName: list.name, projectDir: picked });
                       } else {
                         await invoke("init_project_dir", { listName: list.name });
                       }
@@ -423,31 +633,10 @@ function App() {
               </div>
             );
 
-            if (activeTab === "unnamed") {
-              const withTasks = filtered.filter((l) => l.total > 0);
-              const empty = filtered.filter((l) => l.total === 0);
-              return (
-                <>
-                  {withTasks.length > 0 && (
-                    <>
-                      <div className="section-header">With Tasks</div>
-                      {withTasks.map((list) => renderCard(list, true))}
-                    </>
-                  )}
-                  {empty.length > 0 && (
-                    <>
-                      <div className="section-header">Empty Sessions</div>
-                      {empty.map((list) => renderCard(list, false))}
-                    </>
-                  )}
-                  {filtered.length === 0 && (
-                    <div className="empty-state">No unnamed sessions</div>
-                  )}
-                </>
-              );
+            if (filtered.length === 0) {
+              return <div className="empty-state">{activeTab === "named" ? "No named lists" : "No unnamed sessions"}</div>;
             }
-
-            return filtered.map((list) => renderCard(list, true));
+            return filtered.map((list, i) => renderCard(list, true, i));
           })()}
 
           {activeTab === "named" &&
@@ -564,6 +753,9 @@ function App() {
   if (completed.length > 0)
     groups.push({ label: "Completed", status: "completed", tasks: completed });
 
+  // Flat task list for keyboard navigation indexing
+  const allTasks = groups.flatMap((g) => g.tasks);
+
   return (
     <div className="app-container" data-testid="app-root">
       <div className="header">
@@ -660,8 +852,13 @@ function App() {
             {group.tasks.map((task) => (
               <div
                 key={task.id}
-                className={`task-item ${task.status === "completed" ? "task-completed" : ""}`}
+                className={`task-item ${task.status === "completed" ? "task-completed" : ""}${screen.type === "tasklist" && allTasks.indexOf(task) === focusedIndex ? " focused" : ""}`}
                 data-testid={`task-item-${task.id}`}
+                onMouseEnter={() => {
+                  if (mouseSuppressionRef.current) return;
+                  const idx = allTasks.indexOf(task);
+                  if (idx >= 0) setFocusedIndex(idx);
+                }}
                 onContextMenu={(e) =>
                   showContextMenu(e, [
                     {
@@ -724,14 +921,42 @@ function App() {
                     ))}
                   </div>
                 )}
-                <span
-                  className="task-text"
-                  data-testid={`task-text-${task.id}`}
-                  onMouseEnter={(e) => showTooltip(task, e)}
-                  onMouseLeave={hideTooltip}
-                >
-                  {task.subject}
-                </span>
+                {editingTaskId === task.id ? (
+                  <input
+                    className="task-edit-input"
+                    data-testid={`task-edit-${task.id}`}
+                    value={editingTaskValue}
+                    onChange={(e) => setEditingTaskValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        const val = editingTaskValue.trim();
+                        if (val && val !== task.subject) {
+                          invoke("update_task_subject", {
+                            listName: screen.listName,
+                            taskId: task.id,
+                            newSubject: val,
+                          }).then(() => loadLists());
+                        }
+                        setEditingTaskId(null);
+                      } else if (e.key === "Escape") {
+                        e.preventDefault();
+                        setEditingTaskId(null);
+                      }
+                    }}
+                    onBlur={() => setEditingTaskId(null)}
+                    autoFocus
+                  />
+                ) : (
+                  <span
+                    className="task-text"
+                    data-testid={`task-text-${task.id}`}
+                    onMouseEnter={(e) => showTooltip(task, e)}
+                    onMouseLeave={hideTooltip}
+                  >
+                    {task.subject}
+                  </span>
+                )}
                 {task.status !== "completed" && (
                   <button
                     className={`btn-spawn-task ${task.status === "in_progress" ? "btn-resume" : ""}`}

@@ -248,6 +248,29 @@ fn update_task_status(
 }
 
 #[tauri::command]
+fn update_task_subject(
+    list_name: String,
+    task_id: String,
+    new_subject: String,
+) -> Result<(), String> {
+    let dir = tasks_dir().join(&list_name);
+    let file_path = dir.join(format!("{}.json", task_id));
+
+    if !file_path.exists() {
+        return Err("Task file not found".to_string());
+    }
+
+    let content = fs::read_to_string(&file_path).map_err(|e| e.to_string())?;
+    let mut task: serde_json::Value = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+
+    task["subject"] = serde_json::Value::String(new_subject);
+    let updated = serde_json::to_string_pretty(&task).map_err(|e| e.to_string())?;
+    fs::write(&file_path, updated).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
 fn create_task(list_name: String, subject: String) -> Result<Task, String> {
     let dir = tasks_dir().join(&list_name);
     if !dir.exists() {
@@ -506,6 +529,14 @@ fn set_terminal(terminal: String) -> Result<String, String> {
     let content = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
     fs::write(&path, content).map_err(|e| e.to_string())?;
     Ok("ok".to_string())
+}
+
+#[tauri::command]
+fn hide_window(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        window.hide().map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -769,12 +800,12 @@ fn spawn_task(list_name: String, task_id: String) -> Result<(), String> {
                 let subject = task["subject"].as_str().unwrap_or("");
                 let description = task["description"].as_str().unwrap_or("");
 
-                let mut prompt = format!("[태스크 #{} - {}]", task_id, subject);
+                let mut prompt = format!("[Task #{} - {}]", task_id, subject);
                 if !description.is_empty() {
-                    prompt.push_str(&format!("\n설명: {}", description));
+                    prompt.push_str(&format!("\nDescription: {}", description));
                 }
-                prompt.push_str("\n\n이 태스크를 바로 작업해줘. 별도 탐색 없이 위 정보만으로 시작해.");
-                prompt.push_str(&format!("\n작업 완료 후 TaskUpdate(taskId: \"{}\", status: \"completed\")로 완료 처리해줘.", task_id));
+                prompt.push_str("\n\nStart working on this task immediately. Use only the information above.");
+                prompt.push_str(&format!("\nWhen done, mark it complete with TaskUpdate(taskId: \"{}\", status: \"completed\").", task_id));
 
                 // Small delay to let terminal window appear first
                 std::thread::sleep(Duration::from_millis(500));
@@ -832,12 +863,12 @@ fn spawn_task(list_name: String, task_id: String) -> Result<(), String> {
         let subject = task["subject"].as_str().unwrap_or("");
         let description = task["description"].as_str().unwrap_or("");
 
-        let mut prompt = format!("[태스크 #{} - {}]", task_id, subject);
+        let mut prompt = format!("[Task #{} - {}]", task_id, subject);
         if !description.is_empty() {
-            prompt.push_str(&format!("\\n설명: {}", description));
+            prompt.push_str(&format!("\\nDescription: {}", description));
         }
-        prompt.push_str("\\n\\n이 태스크를 바로 작업해줘. 별도 탐색 없이 위 정보만으로 시작해.");
-        prompt.push_str(&format!("\\n작업 완료 후 TaskUpdate(taskId: \\\"{}\\\", status: \\\"completed\\\")로 완료 처리해줘.", task_id));
+        prompt.push_str("\\n\\nStart working on this task immediately. Use only the information above.");
+        prompt.push_str(&format!("\\nWhen done, mark it complete with TaskUpdate(taskId: \\\"{}\\\", status: \\\"completed\\\").", task_id));
 
         let escaped = prompt.replace('\'', "'\\''");
         let command = format!(
@@ -914,6 +945,7 @@ pub fn run() {
             get_task_lists,
             get_tasks,
             update_task_status,
+            update_task_subject,
             create_task,
             delete_task,
             create_list,
@@ -926,8 +958,42 @@ pub fn run() {
             set_project_dir,
             init_project_dir,
             pick_directory,
+            hide_window,
         ])
         .setup(|app| {
+            // Register global shortcut Command+Y to toggle window
+            #[cfg(desktop)]
+            {
+                use tauri_plugin_global_shortcut::{Code, Modifiers, ShortcutState};
+
+                app.handle().plugin(
+                    tauri_plugin_global_shortcut::Builder::new()
+                        .with_shortcuts(["super+y"])?
+                        .with_handler(|app, shortcut, event| {
+                            if event.state == ShortcutState::Pressed
+                                && shortcut.matches(Modifiers::SUPER, Code::KeyY)
+                            {
+                                if let Some(window) = app.get_webview_window("main") {
+                                    if window.is_visible().unwrap_or(false) {
+                                        let _ = window.hide();
+                                    } else {
+                                        if let Ok(pos) = LAST_WINDOW_POS.lock() {
+                                            if pos.0 != 0 || pos.1 != 0 {
+                                                let _ = window.set_position(
+                                                    tauri::PhysicalPosition::new(pos.0, pos.1),
+                                                );
+                                            }
+                                        }
+                                        let _ = window.show();
+                                        let _ = window.set_focus();
+                                    }
+                                }
+                            }
+                        })
+                        .build(),
+                )?;
+            }
+
             // Note: macOS Tahoe dark icon style darkens the Dock icon.
             // Icon has white checkmark on orange bg so it's still visible in dark mode.
 
