@@ -404,19 +404,17 @@ fn get_terminal_app() -> String {
     "iterm".to_string()
 }
 
-fn send_ctrl_t(process_name: &str) {
-    let name = process_name.to_string();
+fn send_ctrl_t(app_name: &str) {
+    let app = app_name.to_string();
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(1500));
+        std::thread::sleep(std::time::Duration::from_millis(2000));
         let _ = std::process::Command::new("osascript")
             .arg("-e")
             .arg(format!(
-                r#"tell application "System Events"
-    tell process "{}"
-        keystroke "t" using control down
-    end tell
-end tell"#,
-                name
+                r#"tell application "{}" to activate
+delay 0.5
+tell application "System Events" to keystroke "t" using control down"#,
+                app
             ))
             .output();
     });
@@ -466,18 +464,11 @@ end tell"#,
         _ => {
             let escaped = command.replace('\\', "\\\\").replace('"', "\\\"");
             let script = format!(
-                r#"tell application "iTerm2"
+                r#"tell application id "com.googlecode.iterm2"
     activate
-    if (count of windows) = 0 then
-        create window with default profile
-        delay 0.5
-    else
-        tell current window to create tab with default profile
-    end if
-    tell current window
-        tell current session
-            write text "{}"
-        end tell
+    create window with default profile
+    tell current session of current window
+        write text "{}"
     end tell
 end tell"#,
                 escaped
@@ -487,6 +478,7 @@ end tell"#,
                 .arg(&script)
                 .spawn()
                 .map_err(|e| format!("Failed to spawn osascript: {}", e))?;
+            send_ctrl_t("iTerm");
             Ok(())
         }
     }
