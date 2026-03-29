@@ -1,0 +1,15 @@
+{
+  "projectTitle": "Claude Task List",
+  "description": "macOS menu bar app for managing Claude Code tasks. Persistent task visibility, session-linked execution, and one-click resume.",
+  "branch": "main",
+  "folders": ["src", "src-tauri/src"],
+  "excludeFolders": ["node_modules", "dist", "**/target", "src-tauri/gen", "src-tauri/icons"],
+  "excludeFiles": ["Cargo.lock", "package-lock.json"],
+  "rules": [
+    "This is a Tauri v2 desktop app with React 19 frontend and Rust backend",
+    "Task data is stored as JSON files in ~/.claude/tasks/<list-name>/<id>.json",
+    "The app watches the task directory for real-time sync",
+    "Tasks are linked to Claude Code sessions via metadata.session_id",
+    "Supports iTerm2, Terminal.app, and Warp for session spawning"
+  ]
+}

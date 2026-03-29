@@ -1,7 +1,22 @@
 {
-  "name": "app",
+  "name": "claude-task-list",
   "private": true,
   "version": "0.1.0",
+  "description": "Claude Code tasks, unchained from sessions. A macOS menu bar app to see, launch, and resume tasks.",
+  "author": "dan",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/namho-hong/claude-task-list"
+  },
+  "keywords": [
+    "claude-code",
+    "tauri",
+    "macos",
+    "menubar",
+    "task-manager",
+    "developer-tools"
+  ],
   "type": "module",
   "scripts": {
     "dev": "vite",

@@ -1,0 +1,32 @@
+# Claude Task List
+
+> A macOS menu bar app that provides persistent, always-visible access to Claude Code's task management system (~/.claude/tasks/). Tasks carry their session context — launch or resume Claude Code sessions directly from the menu bar with one click.
+
+Claude Task List solves a specific friction for Claude Code power users: task lists are bound to sessions and disappear when the terminal closes. This app watches the task directory in real-time and surfaces all lists and tasks in a lightweight menu bar UI. Unlike external task managers (Linear, Notion via MCP), tasks here are native to Claude Code — Claude creates them, Claude executes them, and session context is preserved.
+
+Built with Tauri v2 (Rust backend + WebView) and React 19. Data is stored as JSON files — no database, no sync server.
+
+## Core Documentation
+
+- [README](https://github.com/namho-hong/claude-task-list/blob/main/README.md): Installation, usage, and project overview
+- [Project Guide](https://github.com/namho-hong/claude-task-list/blob/main/CLAUDE.md): Architecture, conventions, and development setup
+
+## Source Code
+
+- [App.tsx](https://github.com/namho-hong/claude-task-list/blob/main/src/App.tsx): React main component — dual-screen UI, task list rendering, task actions
+- [lib.rs](https://github.com/namho-hong/claude-task-list/blob/main/src-tauri/src/lib.rs): Rust backend — file watcher, system tray, session spawn, terminal integration
+- [tauri.conf.json](https://github.com/namho-hong/claude-task-list/blob/main/src-tauri/tauri.conf.json): Window configuration (380x520, transparent, hudWindow style)
+- [App.css](https://github.com/namho-hong/claude-task-list/blob/main/src/App.css): Tailwind + glassmorphism dark mode styles
+
+## Key Concepts
+
+- Named lists: User-defined persistent task lists, optionally bound to a project directory
+- Unnamed lists: UUID-based temporary session lists
+- Session linking: Tasks store a session_id in metadata for resume capability
+- Guard tasks: ID 0/999 reserved for list structure preservation (hidden in UI)
+- File watching: Real-time sync with ~/.claude/tasks/ via debounced file watcher (300ms)
+- Terminal support: iTerm2, Terminal.app, Warp — session spawn via osascript
+
+## Optional
+
+- [Seed Content](https://github.com/namho-hong/claude-task-list/blob/main/.claude/seed-content.md): Origin story, positioning, and product vision
