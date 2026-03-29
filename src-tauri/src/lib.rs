@@ -617,7 +617,7 @@ fn find_session_project_dir(session_id: &str) -> Option<String> {
                     }
                 }
             }
-            // Fallback: derive directory from the project folder name (e.g. "-Users-dan-Foo" → "/Users/dan/Foo")
+            // Fallback: derive directory from the project folder name (e.g. "-Users-alice-Foo" → "/Users/alice/Foo")
             if let Some(dir_name) = project_path.file_name().and_then(|n| n.to_str()) {
                 if dir_name.starts_with('-') {
                     let derived = dir_name.replace('-', "/");

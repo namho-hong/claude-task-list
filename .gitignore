@@ -13,6 +13,16 @@ dist-ssr
 *.local
 src-tauri/gen/
 
+# Claude development files (keep CLAUDE.md)
+.claude/
+start-ralph.sh
+
+# Secrets / keys (preventive)
+.env
+.env.*
+*.pem
+*.key
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
