@@ -66,6 +66,8 @@ pub struct TaskList {
     pub completed: usize,
     #[serde(rename = "lastUpdated")]
     pub last_updated: u64,
+    #[serde(rename = "projectDir")]
+    pub project_dir: Option<String>,
 }
 
 fn tasks_dir() -> PathBuf {
@@ -157,12 +159,22 @@ fn get_task_lists() -> Vec<TaskList> {
 
             let total = tasks.len();
             let completed = tasks.iter().filter(|t| t.status == "completed").count();
+            let project_dir = read_project_dir(&name).or_else(|| {
+                if is_uuid(&name) {
+                    if let Some(dir) = find_session_project_dir(&name) {
+                        let _ = write_project_dir(&name, &dir);
+                        return Some(dir);
+                    }
+                }
+                None
+            });
             lists.push(TaskList {
                 name,
                 tasks,
                 total,
                 completed,
                 last_updated: max_mtime,
+                project_dir,
             });
         }
     }
@@ -463,6 +475,29 @@ fn set_terminal(terminal: String) -> Result<String, String> {
     Ok("ok".to_string())
 }
 
+#[tauri::command]
+fn set_project_dir(list_name: String, project_dir: String) -> Result<(), String> {
+    write_project_dir(&list_name, &project_dir)
+}
+
+#[tauri::command]
+fn init_project_dir(list_name: String) -> Result<String, String> {
+    let ws = workspace_dir(&list_name);
+    fs::create_dir_all(&ws).map_err(|e| e.to_string())?;
+    let dir_str = ws.to_string_lossy().to_string();
+    write_project_dir(&list_name, &dir_str)?;
+    Ok(dir_str)
+}
+
+#[tauri::command]
+fn pick_directory(default_path: Option<String>) -> Option<String> {
+    let mut builder = rfd::FileDialog::new();
+    if let Some(ref p) = default_path {
+        builder = builder.set_directory(p);
+    }
+    builder.pick_folder().map(|p: std::path::PathBuf| p.to_string_lossy().to_string())
+}
+
 fn is_uuid(name: &str) -> bool {
     let parts: Vec<&str> = name.split('-').collect();
     parts.len() == 5
@@ -688,6 +723,7 @@ fn start_file_watcher(app_handle: tauri::AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             get_task_lists,
             get_tasks,
@@ -701,6 +737,9 @@ pub fn run() {
             spawn_task,
             get_config,
             set_terminal,
+            set_project_dir,
+            init_project_dir,
+            pick_directory,
         ])
         .setup(|app| {
             // Note: macOS Tahoe dark icon style darkens the Dock icon.

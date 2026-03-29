@@ -149,6 +149,38 @@ body {
   min-width: 0;
 }
 
+.list-project-dir {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.3);
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.list-project-dir.clickable {
+  cursor: pointer;
+}
+
+.list-project-dir.clickable:hover {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.btn-set-project-dir {
+  font-size: 11px;
+  color: rgba(218, 119, 86, 0.7);
+  background: none;
+  border: none;
+  padding: 0;
+  margin-top: 4px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.btn-set-project-dir:hover {
+  color: #DA7756;
+}
+
 .progress-label {
   font-size: 11px;
   color: rgba(255, 255, 255, 0.3);
@@ -267,7 +299,7 @@ body {
 }
 
 .task-completed {
-  opacity: 0.4;
+  color: rgba(255, 255, 255, 0.4);
 }
 
 .task-status {
@@ -277,10 +309,56 @@ body {
   flex-shrink: 0;
 }
 
+.task-status-clickable {
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+
+.task-status-clickable:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.status-dropdown {
+  position: fixed;
+  background: rgba(30, 30, 34, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  padding: 4px;
+  z-index: 200;
+  min-width: 130px;
+  backdrop-filter: blur(12px);
+}
+
+.status-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  border-radius: 5px;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.status-dropdown-item:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.status-dropdown-item.active {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.status-dropdown-icon {
+  width: 16px;
+  text-align: center;
+  font-size: 13px;
+}
+
 .task-text {
   font-size: 13px;
   flex: 1;
-  cursor: pointer;
 }
 
 /* Section headers */
@@ -381,7 +459,7 @@ body {
   color: rgba(255, 255, 255, 0.7);
 }
 
-.settings-row {
+.settings-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;

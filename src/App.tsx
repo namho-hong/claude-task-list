@@ -5,7 +5,7 @@ import "./App.css";
 
 // Clawd - Claude Code's 8-bit pixel art robot mascot
 import clawdImg from "./assets/clawd.png";
-function ClawdIcon({ size = 20 }: { size?: number }) {
+function ClaudeIcon({ size = 20 }: { size?: number }) {
   return <img src={clawdImg} alt="Clawd" width={size} height={size * 0.64} style={{ imageRendering: "pixelated" }} />;
 }
 
@@ -25,9 +25,10 @@ interface TaskList {
   total: number;
   completed: number;
   lastUpdated: number;
+  projectDir: string | null;
 }
 
-type Screen = { type: "lists" } | { type: "detail"; listName: string };
+type Screen = { type: "listlist" } | { type: "tasklist"; listName: string };
 
 const STATUS_ORDER: Record<string, number> = {
   in_progress: 0,
@@ -35,11 +36,11 @@ const STATUS_ORDER: Record<string, number> = {
   completed: 2,
 };
 
-const NEXT_STATUS: Record<string, string> = {
-  pending: "in_progress",
-  in_progress: "completed",
-  completed: "pending",
-};
+const STATUS_OPTIONS: { value: Task["status"]; icon: string; label: string }[] = [
+  { value: "pending", icon: "○", label: "Pending" },
+  { value: "in_progress", icon: "◉", label: "In Progress" },
+  { value: "completed", icon: "✓", label: "Completed" },
+];
 
 const TERMINAL_OPTIONS = [
   { value: "iterm", label: "iTerm2" },
@@ -58,7 +59,7 @@ interface ContextMenuState {
 
 function App() {
   const [lists, setLists] = useState<TaskList[]>([]);
-  const [screen, setScreen] = useState<Screen>({ type: "lists" });
+  const [screen, setScreen] = useState<Screen>({ type: "listlist" });
   const [activeTab, setActiveTab] = useState<"named" | "unnamed">("named");
   const [newListName, setNewListName] = useState("");
   const [showNewListInput, setShowNewListInput] = useState(false);
@@ -73,6 +74,7 @@ function App() {
   } | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [showListMenu, setShowListMenu] = useState(false);
+  const [statusDropdown, setStatusDropdown] = useState<{ taskId: string; x: number; y: number } | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const listMenuRef = useRef<HTMLDivElement>(null);
@@ -115,6 +117,7 @@ function App() {
     const handleClick = () => {
       setContextMenu(null);
       setShowListMenu(false);
+      setStatusDropdown(null);
     };
     window.addEventListener("click", handleClick);
     return () => window.removeEventListener("click", handleClick);
@@ -146,7 +149,7 @@ function App() {
   const handleDeleteList = async (listName: string) => {
     try {
       await invoke("delete_list", { listName });
-      setScreen({ type: "lists" });
+      setScreen({ type: "listlist" });
       await loadLists();
     } catch (err) {
       console.error("Failed to delete list:", err);
@@ -158,7 +161,7 @@ function App() {
     if (!sanitized || sanitized === oldName) return;
     try {
       await invoke("rename_list", { oldName, newName: sanitized });
-      setScreen({ type: "detail", listName: sanitized });
+      setScreen({ type: "tasklist", listName: sanitized });
       setActiveTab("named");
       await loadLists();
     } catch (err) {
@@ -166,17 +169,12 @@ function App() {
     }
   };
 
-  const handleToggleStatus = async (listName: string, task: Task) => {
-    const newStatus = NEXT_STATUS[task.status] || "pending";
+  const handleSetStatus = async (listName: string, taskId: string, newStatus: string) => {
     try {
-      await invoke("update_task_status", {
-        listName,
-        taskId: task.id,
-        newStatus,
-      });
+      await invoke("update_task_status", { listName, taskId, newStatus });
       await loadLists();
     } catch (err) {
-      console.error("Failed to toggle status:", err);
+      console.error("Failed to set status:", err);
     }
   };
 
@@ -246,11 +244,11 @@ function App() {
   };
 
   // Screen 1: List selection
-  if (screen.type === "lists") {
+  if (screen.type === "listlist") {
     return (
       <div className="app-container" data-testid="app-root">
         <div className="header">
-          <ClawdIcon size={22} />
+          <ClaudeIcon size={22} />
           <span className="header-title">Claude Task List</span>
           <button
             className="btn-settings"
@@ -261,7 +259,7 @@ function App() {
         </div>
         {showSettings && (
           <>
-            <div className="settings-row">
+            <div className="settings-bar">
               <span className="settings-label">Terminal</span>
               <select
                 className="settings-select"
@@ -307,7 +305,7 @@ function App() {
                 className="list-card"
                 data-testid={`list-card-${list.name}`}
                 onClick={() =>
-                  setScreen({ type: "detail", listName: list.name })
+                  setScreen({ type: "tasklist", listName: list.name })
                 }
                 onContextMenu={(e) =>
                   showContextMenu(e, [
@@ -342,7 +340,7 @@ function App() {
                         handleSpawnAll(list.name);
                       }}
                     >
-                      <ClawdIcon size={18} />
+                      <ClaudeIcon size={18} />
                     </button>
                   )}
                 </div>
@@ -355,6 +353,37 @@ function App() {
                     style={{ width: `${progressPercent(list)}%` }}
                   />
                 </div>
+                {list.projectDir ? (
+                  <div
+                    className="list-project-dir clickable"
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      const selected = await invoke<string | null>("pick_directory", { defaultPath: list.projectDir });
+                      if (selected && selected !== list.projectDir) {
+                        await invoke("set_project_dir", { listName: list.name, projectDir: selected });
+                        await loadLists();
+                      }
+                    }}
+                  >
+                    {list.projectDir.replace(/^\/Users\/[^/]+/, "~")}
+                  </div>
+                ) : (
+                  <button
+                    className="btn-set-project-dir"
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      const selected = await invoke<string | null>("pick_directory", { defaultPath: null });
+                      if (selected) {
+                        await invoke("set_project_dir", { listName: list.name, projectDir: selected });
+                      } else {
+                        await invoke("init_project_dir", { listName: list.name });
+                      }
+                      await loadLists();
+                    }}
+                  >
+                    Set directory
+                  </button>
+                )}
               </div>
             );
 
@@ -475,7 +504,7 @@ function App() {
         <button
           className="btn-back"
           data-testid="btn-back"
-          onClick={() => setScreen({ type: "lists" })}
+          onClick={() => setScreen({ type: "listlist" })}
         >
           ←
         </button>
@@ -508,7 +537,7 @@ function App() {
             data-testid="btn-spawn-all"
             onClick={() => handleSpawnAll(screen.listName)}
           >
-            <ClawdIcon size={20} />
+            <ClaudeIcon size={20} />
           </button>
           <div className="list-menu-wrapper" ref={listMenuRef}>
             <button
@@ -588,8 +617,17 @@ function App() {
                 }
               >
                 <span
-                  className={`task-status ${task.status === "in_progress" ? "status-active" : ""}`}
+                  className={`task-status task-status-clickable ${task.status === "in_progress" ? "status-active" : ""}`}
                   data-testid={`task-status-${task.id}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                    setStatusDropdown(
+                      statusDropdown?.taskId === task.id
+                        ? null
+                        : { taskId: task.id, x: rect.left, y: rect.bottom + 4 }
+                    );
+                  }}
                 >
                   {task.status === "completed"
                     ? "✓"
@@ -597,10 +635,32 @@ function App() {
                       ? "◉"
                       : "○"}
                 </span>
+                {statusDropdown?.taskId === task.id && (
+                  <div
+                    className="status-dropdown"
+                    style={{ left: statusDropdown.x, top: statusDropdown.y }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {STATUS_OPTIONS.map((opt) => (
+                      <div
+                        key={opt.value}
+                        className={`status-dropdown-item ${opt.value === task.status ? "active" : ""}`}
+                        onClick={async () => {
+                          if (opt.value !== task.status) {
+                            await handleSetStatus(screen.listName, task.id, opt.value);
+                          }
+                          setStatusDropdown(null);
+                        }}
+                      >
+                        <span className="status-dropdown-icon">{opt.icon}</span>
+                        {opt.label}
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <span
                   className="task-text"
                   data-testid={`task-text-${task.id}`}
-                  onClick={() => handleToggleStatus(screen.listName, task)}
                   onMouseEnter={(e) => showTooltip(task, e)}
                   onMouseLeave={hideTooltip}
                 >
