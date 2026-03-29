@@ -85,23 +85,37 @@ fn workspace_dir(list_name: &str) -> PathBuf {
     home.join("claude-task-list").join(list_name)
 }
 
-fn read_project_dir(list_name: &str) -> Option<String> {
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+struct ListMeta {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    project_dir: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    channel: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tmux_session: Option<String>,
+}
+
+fn read_meta(list_name: &str) -> Option<ListMeta> {
     let meta_path = tasks_dir().join(list_name).join("_meta.json");
-    if meta_path.exists() {
-        let content = fs::read_to_string(&meta_path).ok()?;
-        let val: serde_json::Value = serde_json::from_str(&content).ok()?;
-        val.get("project_dir").and_then(|v| v.as_str()).map(|s| s.to_string())
-    } else {
-        None
-    }
+    let content = fs::read_to_string(&meta_path).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
+fn write_meta(list_name: &str, meta: &ListMeta) -> Result<(), String> {
+    let meta_path = tasks_dir().join(list_name).join("_meta.json");
+    let content = serde_json::to_string_pretty(meta).map_err(|e| e.to_string())?;
+    fs::write(&meta_path, content).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn read_project_dir(list_name: &str) -> Option<String> {
+    read_meta(list_name).and_then(|m| m.project_dir)
 }
 
 fn write_project_dir(list_name: &str, project_dir: &str) -> Result<(), String> {
-    let meta_path = tasks_dir().join(list_name).join("_meta.json");
-    let meta = serde_json::json!({ "project_dir": project_dir });
-    let content = serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?;
-    fs::write(&meta_path, content).map_err(|e| e.to_string())?;
-    Ok(())
+    let mut meta = read_meta(list_name).unwrap_or_default();
+    meta.project_dir = Some(project_dir.to_string());
+    write_meta(list_name, &meta)
 }
 
 #[tauri::command]
@@ -342,27 +356,34 @@ fn rename_list(old_name: String, new_name: String) -> Result<(), String> {
         return Err("A list with that name already exists".to_string());
     }
 
-    // Capture project_dir before rename
-    let project_dir = if is_uuid(&old_name) {
-        // UUID → Named: try to get project dir from session JSONL
-        find_session_project_dir(&old_name)
-    } else {
-        // Named → Named: read existing _meta.json
-        read_project_dir(&old_name)
-    };
+    // Capture existing meta before rename
+    let mut meta = read_meta(&old_name).unwrap_or_default();
+
+    // Fill project_dir if missing
+    if meta.project_dir.is_none() {
+        if is_uuid(&old_name) {
+            meta.project_dir = find_session_project_dir(&old_name);
+        }
+    }
+
+    // Auto-detect channel info for UUID → Named rename
+    if is_uuid(&old_name) && meta.channel.is_none() {
+        if let Some(channel) = find_session_channel(&old_name) {
+            meta.channel = Some(channel);
+            meta.tmux_session = find_tmux_session_for_uuid(&old_name);
+        }
+    }
 
     fs::rename(&old_dir, &new_dir).map_err(|e| e.to_string())?;
 
-    // Write _meta.json with captured or new project_dir
-    match project_dir {
-        Some(dir) => write_project_dir(&sanitized, &dir)?,
-        None => {
-            // No existing dir info: create new workspace
-            let ws = workspace_dir(&sanitized);
-            fs::create_dir_all(&ws).map_err(|e| e.to_string())?;
-            write_project_dir(&sanitized, &ws.to_string_lossy())?;
-        }
+    // Ensure project_dir has a value
+    if meta.project_dir.is_none() {
+        let ws = workspace_dir(&sanitized);
+        fs::create_dir_all(&ws).map_err(|e| e.to_string())?;
+        meta.project_dir = Some(ws.to_string_lossy().to_string());
     }
+
+    write_meta(&sanitized, &meta)?;
 
     Ok(())
 }
@@ -381,6 +402,24 @@ fn get_terminal_app() -> String {
         }
     }
     "iterm".to_string()
+}
+
+fn send_ctrl_t(process_name: &str) {
+    let name = process_name.to_string();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        let _ = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(format!(
+                r#"tell application "System Events"
+    tell process "{}"
+        keystroke "t" using control down
+    end tell
+end tell"#,
+                name
+            ))
+            .output();
+    });
 }
 
 fn spawn_in_terminal(command: &str) -> Result<(), String> {
@@ -404,6 +443,7 @@ fn spawn_in_terminal(command: &str) -> Result<(), String> {
                 .arg(&spawn_path)
                 .spawn()
                 .map_err(|e| format!("Failed to open in Warp: {}", e))?;
+            send_ctrl_t("Warp");
             Ok(())
         }
         "terminal" => {
@@ -420,6 +460,7 @@ end tell"#,
                 .arg(&script)
                 .spawn()
                 .map_err(|e| format!("Failed to spawn osascript: {}", e))?;
+            send_ctrl_t("Terminal");
             Ok(())
         }
         _ => {
@@ -458,7 +499,7 @@ fn get_config() -> serde_json::Value {
             return config;
         }
     }
-    serde_json::json!({"terminal": "iterm"})
+    serde_json::json!({"terminal": "terminal"})
 }
 
 #[tauri::command]
@@ -507,6 +548,20 @@ fn is_uuid(name: &str) -> bool {
             .all(|(&len, part)| part.len() == len && part.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
+fn read_cwd_from_jsonl(path: &std::path::Path) -> Option<String> {
+    let content = fs::read_to_string(path).ok()?;
+    for line in content.lines().take(10) {
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
+            if let Some(cwd) = val.get("cwd").and_then(|v| v.as_str()) {
+                if !cwd.is_empty() {
+                    return Some(cwd.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Find the project directory where a session was originally run
 /// by reading the cwd field from the session JSONL file
 fn find_session_project_dir(session_id: &str) -> Option<String> {
@@ -520,37 +575,65 @@ fn find_session_project_dir(session_id: &str) -> Option<String> {
         if !project_path.is_dir() {
             continue;
         }
+        // Check for flat session file: <project>/<session_id>.jsonl
         let jsonl = project_path.join(format!("{}.jsonl", session_id));
         if jsonl.exists() {
-            // Read cwd from session file (appears in early lines)
-            if let Ok(content) = fs::read_to_string(&jsonl) {
-                for line in content.lines().take(10) {
-                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
-                        if let Some(cwd) = val.get("cwd").and_then(|v| v.as_str()) {
-                            if !cwd.is_empty() {
-                                return Some(cwd.to_string());
-                            }
+            if let Some(cwd) = read_cwd_from_jsonl(&jsonl) {
+                return Some(cwd);
+            }
+        }
+        // Check for directory-type session: <project>/<session_id>/
+        let dir = project_path.join(session_id);
+        if dir.is_dir() {
+            if let Ok(files) = fs::read_dir(&dir) {
+                for file in files.flatten() {
+                    if file.path().extension().map_or(false, |e| e == "jsonl") {
+                        if let Some(cwd) = read_cwd_from_jsonl(&file.path()) {
+                            return Some(cwd);
                         }
                     }
                 }
             }
+            // Fallback: derive directory from the project folder name (e.g. "-Users-dan-Foo" → "/Users/dan/Foo")
+            if let Some(dir_name) = project_path.file_name().and_then(|n| n.to_str()) {
+                if dir_name.starts_with('-') {
+                    let derived = dir_name.replace('-', "/");
+                    if std::path::Path::new(&derived).is_dir() {
+                        return Some(derived);
+                    }
+                }
+            }
         }
-        // Also check directory-type sessions
-        let dir = project_path.join(session_id);
-        if dir.is_dir() {
-            // Look for any jsonl inside
-            if let Ok(files) = fs::read_dir(&dir) {
-                for file in files.flatten() {
-                    if file.path().extension().map_or(false, |e| e == "jsonl") {
-                        if let Ok(content) = fs::read_to_string(file.path()) {
-                            for line in content.lines().take(10) {
-                                if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
-                                    if let Some(cwd) = val.get("cwd").and_then(|v| v.as_str()) {
-                                        if !cwd.is_empty() {
-                                            return Some(cwd.to_string());
-                                        }
+    }
+    None
+}
+
+/// Check if a session JSONL contains channel-origin messages (e.g. telegram)
+fn find_session_channel(session_id: &str) -> Option<String> {
+    let home = dirs::home_dir()?;
+    let projects_dir = home.join(".claude").join("projects");
+    if !projects_dir.exists() {
+        return None;
+    }
+    for entry in fs::read_dir(&projects_dir).ok()?.flatten() {
+        let project_path = entry.path();
+        if !project_path.is_dir() {
+            continue;
+        }
+        let jsonl = project_path.join(format!("{}.jsonl", session_id));
+        if jsonl.exists() {
+            if let Ok(content) = fs::read_to_string(&jsonl) {
+                for line in content.lines().take(30) {
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
+                        if let Some(kind) = val.pointer("/origin/kind").and_then(|v| v.as_str()) {
+                            if kind == "channel" {
+                                // Extract channel type from server field (e.g. "plugin:telegram:telegram")
+                                if let Some(server) = val.pointer("/origin/server").and_then(|v| v.as_str()) {
+                                    if server.contains("telegram") {
+                                        return Some("telegram".to_string());
                                     }
                                 }
+                                return Some("channel".to_string());
                             }
                         }
                     }
@@ -561,16 +644,96 @@ fn find_session_project_dir(session_id: &str) -> Option<String> {
     None
 }
 
+/// Find tmux session name for a given CLAUDE_SESSION UUID by scanning ~/.claude/*.sh
+fn find_tmux_session_for_uuid(session_id: &str) -> Option<String> {
+    let home = dirs::home_dir()?;
+    let claude_dir = home.join(".claude");
+    for entry in fs::read_dir(&claude_dir).ok()?.flatten() {
+        let path = entry.path();
+        if path.extension().map_or(false, |e| e == "sh") {
+            if let Ok(content) = fs::read_to_string(&path) {
+                if content.contains(&format!("CLAUDE_SESSION=\"{}\"", session_id)) {
+                    // Extract SESSION="..." from the script
+                    for line in content.lines() {
+                        let trimmed = line.trim();
+                        if trimmed.starts_with("SESSION=") && !trimmed.starts_with("CLAUDE_SESSION=") {
+                            return trimmed
+                                .trim_start_matches("SESSION=")
+                                .trim_matches('"')
+                                .to_string()
+                                .into();
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Ensure a channel's tmux session is running, start it if not
+fn ensure_channel_session(tmux_session: &str) -> Result<(), String> {
+    let check = std::process::Command::new("tmux")
+        .args(["has-session", "-t", tmux_session])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !check.status.success() {
+        // Session not running — start via ~/.claude/{name}.sh
+        let home = dirs::home_dir().ok_or("Cannot find home directory")?;
+        let script = home.join(".claude").join(format!("{}.sh", tmux_session));
+        if script.exists() {
+            std::process::Command::new("bash")
+                .arg(&script)
+                .arg("start")
+                .output()
+                .map_err(|e| format!("Failed to start {}: {}", tmux_session, e))?;
+            // Wait for session to be ready
+            std::thread::sleep(Duration::from_secs(5));
+        } else {
+            return Err(format!("Start script not found: {}", script.display()));
+        }
+    }
+    Ok(())
+}
+
+/// Bring a tmux session to foreground in Terminal.app
+fn foreground_tmux_session(tmux_session: &str) -> Result<(), String> {
+    let script = format!(
+        r#"tell application "Terminal"
+    do script "tmux attach -t {}"
+    activate
+end tell"#,
+        tmux_session
+    );
+    std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(&script)
+        .spawn()
+        .map_err(|e| format!("Failed to open terminal: {}", e))?;
+    Ok(())
+}
+
 #[tauri::command]
 fn spawn_list(list_name: String) -> Result<(), String> {
-    if is_uuid(&list_name) {
-        // Unnamed session: resume in the original project directory
-        if let Some(project_dir) = find_session_project_dir(&list_name) {
-            let command = format!("cd \"{}\" && claude --resume {}", project_dir, list_name);
-            return spawn_in_terminal(&command);
+    // Check for channel list
+    if let Some(meta) = read_meta(&list_name) {
+        if meta.channel.is_some() {
+            if let Some(ref tmux) = meta.tmux_session {
+                ensure_channel_session(tmux)?;
+                return foreground_tmux_session(tmux);
+            }
         }
-        // Fallback: just use task list ID
-        let command = format!("CLAUDE_CODE_TASK_LIST_ID={} claude", list_name);
+    }
+
+    if is_uuid(&list_name) {
+        // Unnamed session: use task list ID with project directory if available
+        let project_dir = read_project_dir(&list_name)
+            .or_else(|| find_session_project_dir(&list_name));
+        let command = if let Some(dir) = project_dir {
+            format!("cd \"{}\" && CLAUDE_CODE_TASK_LIST_ID={} claude", dir, list_name)
+        } else {
+            format!("CLAUDE_CODE_TASK_LIST_ID={} claude", list_name)
+        };
         return spawn_in_terminal(&command);
     }
 
@@ -602,6 +765,37 @@ fn spawn_task(list_name: String, task_id: String) -> Result<(), String> {
     } else {
         return Err("Task file not found".to_string());
     };
+
+    // Check for channel list — inject prompt into running tmux session
+    if let Some(meta) = read_meta(&list_name) {
+        if meta.channel.is_some() {
+            if let Some(ref tmux) = meta.tmux_session {
+                ensure_channel_session(tmux)?;
+                foreground_tmux_session(tmux)?;
+
+                // Build prompt and inject via tmux send-keys
+                let subject = task["subject"].as_str().unwrap_or("");
+                let description = task["description"].as_str().unwrap_or("");
+
+                let mut prompt = format!("[태스크 #{} - {}]", task_id, subject);
+                if !description.is_empty() {
+                    prompt.push_str(&format!("\n설명: {}", description));
+                }
+                prompt.push_str("\n\n이 태스크를 바로 작업해줘. 별도 탐색 없이 위 정보만으로 시작해.");
+                prompt.push_str(&format!("\n작업 완료 후 TaskUpdate(taskId: \"{}\", status: \"completed\")로 완료 처리해줘.", task_id));
+
+                // Small delay to let terminal window appear first
+                std::thread::sleep(Duration::from_millis(500));
+
+                std::process::Command::new("tmux")
+                    .args(["send-keys", "-t", tmux, &prompt, "Enter"])
+                    .output()
+                    .map_err(|e| format!("Failed to send keys: {}", e))?;
+
+                return Ok(());
+            }
+        }
+    }
 
     let status = task["status"].as_str().unwrap_or("pending");
     let existing_session_id = task

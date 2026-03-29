@@ -149,6 +149,55 @@ body {
   min-width: 0;
 }
 
+.list-preview-tooltip {
+  position: fixed;
+  background: rgba(30, 30, 34, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 8px 10px;
+  z-index: 150;
+  backdrop-filter: blur(12px);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 90%;
+  left: 50% !important;
+  transform: translateX(-50%);
+  pointer-events: auto;
+}
+
+.list-preview-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.list-preview-item.preview-completed {
+  color: rgba(255, 255, 255, 0.3);
+}
+
+.preview-icon {
+  font-size: 10px;
+  width: 14px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.preview-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.list-preview-more {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.25);
+  margin-top: 2px;
+  padding-left: 20px;
+}
+
 .list-project-dir {
   font-size: 11px;
   color: rgba(255, 255, 255, 0.3);
@@ -445,47 +494,27 @@ body {
 }
 
 /* Settings */
-.btn-settings {
-  background: none;
-  border: none;
-  color: rgba(255, 255, 255, 0.4);
-  font-size: 20px;
-  cursor: pointer;
-  padding: 0 4px;
-  transition: color 0.15s;
-}
-
-.btn-settings:hover {
-  color: rgba(255, 255, 255, 0.7);
-}
-
-.settings-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 16px 8px;
-  gap: 8px;
-}
-
-.settings-label {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.5);
-}
-
-.settings-select {
+.header-terminal-select {
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 6px;
-  padding: 4px 8px;
-  font-size: 12px;
-  color: #f0f0f0;
+  padding: 3px 6px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.6);
   font-family: inherit;
   outline: none;
   cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
 }
 
-.settings-select:focus {
+.header-terminal-select:hover {
+  color: #f0f0f0;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.header-terminal-select:focus {
   border-color: rgba(218, 119, 86, 0.5);
+  color: #f0f0f0;
 }
 
 .settings-warning {
@@ -529,6 +558,15 @@ body {
   font-size: 14px;
   font-weight: 600;
   padding: 2px 6px;
+}
+
+/* Card rename input */
+.card-rename-input {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 2px 6px;
+  min-width: 0;
 }
 
 /* Empty state */

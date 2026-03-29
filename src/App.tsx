@@ -64,8 +64,7 @@ function App() {
   const [newListName, setNewListName] = useState("");
   const [showNewListInput, setShowNewListInput] = useState(false);
   const [newTaskSubject, setNewTaskSubject] = useState("");
-  const [terminal, setTerminal] = useState("iterm");
-  const [showSettings, setShowSettings] = useState(false);
+  const [terminal, setTerminal] = useState("terminal");
   const [tooltip, setTooltip] = useState<{
     id: string;
     text: string;
@@ -75,8 +74,12 @@ function App() {
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [showListMenu, setShowListMenu] = useState(false);
   const [statusDropdown, setStatusDropdown] = useState<{ taskId: string; x: number; y: number } | null>(null);
+  const [listPreview, setListPreview] = useState<{ name: string; x: number; y: number; above: boolean } | null>(null);
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
+  const [renamingCard, setRenamingCard] = useState<string | null>(null);
+  const [cardRenameValue, setCardRenameValue] = useState("");
   const listMenuRef = useRef<HTMLDivElement>(null);
 
   const loadLists = useCallback(async () => {
@@ -120,7 +123,9 @@ function App() {
       setStatusDropdown(null);
     };
     window.addEventListener("click", handleClick);
-    return () => window.removeEventListener("click", handleClick);
+    return () => {
+      window.removeEventListener("click", handleClick);
+    };
   }, []);
 
   const handleSetTerminal = async (value: string) => {
@@ -250,31 +255,18 @@ function App() {
         <div className="header">
           <ClaudeIcon size={22} />
           <span className="header-title">Claude Task List</span>
-          <button
-            className="btn-settings"
-            onClick={() => setShowSettings(!showSettings)}
+          <select
+            className="header-terminal-select"
+            value={terminal}
+            onChange={(e) => handleSetTerminal(e.target.value)}
           >
-            ⚙
-          </button>
+            {TERMINAL_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
         </div>
-        {showSettings && (
-          <>
-            <div className="settings-bar">
-              <span className="settings-label">Terminal</span>
-              <select
-                className="settings-select"
-                value={terminal}
-                onChange={(e) => handleSetTerminal(e.target.value)}
-              >
-                {TERMINAL_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </>
-        )}
         {/* Tab bar */}
         <div className="tab-bar">
           <button
@@ -293,7 +285,10 @@ function App() {
           </button>
         </div>
         <div className="divider" />
-        <div className="content">
+        <div className="content" onScroll={() => {
+          if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+          setListPreview(null);
+        }}>
           {(() => {
             const filtered = lists.filter((list) =>
               activeTab === "named" ? !isUuid(list.name) : isUuid(list.name)
@@ -307,13 +302,29 @@ function App() {
                 onClick={() =>
                   setScreen({ type: "tasklist", listName: list.name })
                 }
+                onMouseEnter={(e) => {
+                  if (list.total > 0) {
+                    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                    hoverTimerRef.current = setTimeout(() => {
+                      const estimatedHeight = Math.min(list.total, 8) * 20 + 24;
+                      const spaceBelow = window.innerHeight - rect.bottom;
+                      const above = spaceBelow < estimatedHeight + 8;
+                      const y = above ? rect.top - 4 : rect.bottom + 4;
+                      setListPreview({ name: list.name, x: rect.left, y, above });
+                    }, 1000);
+                  }
+                }}
+                onMouseLeave={() => {
+                  if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+                  setListPreview(null);
+                }}
                 onContextMenu={(e) =>
                   showContextMenu(e, [
                     {
                       label: "Rename",
                       onClick: () => {
-                        const newName = prompt("새 이름:", list.name);
-                        if (newName) handleRenameList(list.name, newName);
+                        setCardRenameValue(isUuid(list.name) ? "" : list.name);
+                        setRenamingCard(list.name);
                       },
                     },
                     {
@@ -325,12 +336,37 @@ function App() {
                 }
               >
                 <div className="list-card-header">
-                  <span className="list-name">
-                    {list.name}{" "}
-                    <span className="list-count-inline">
-                      ({list.completed}/{list.total})
+                  {renamingCard === list.name ? (
+                    <input
+                      className="text-input card-rename-input"
+                      data-testid={`input-rename-card-${list.name}`}
+                      value={cardRenameValue}
+                      placeholder="Enter list name"
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) =>
+                        setCardRenameValue(e.target.value.replace(/\s+/g, "-"))
+                      }
+                      onKeyDown={async (e) => {
+                        e.stopPropagation();
+                        if (e.key === "Enter") {
+                          await handleRenameList(list.name, cardRenameValue);
+                          setRenamingCard(null);
+                        }
+                        if (e.key === "Escape") {
+                          setRenamingCard(null);
+                        }
+                      }}
+                      onBlur={() => setRenamingCard(null)}
+                      autoFocus
+                    />
+                  ) : (
+                    <span className="list-name">
+                      {list.name}{" "}
+                      <span className="list-count-inline">
+                        ({list.completed}/{list.total})
+                      </span>
                     </span>
-                  </span>
+                  )}
                   {showSpawn && (
                     <button
                       className="btn-play"
@@ -455,6 +491,36 @@ function App() {
             )}
         </div>
 
+        {/* List Preview Tooltip */}
+        {listPreview && (() => {
+          const previewList = lists.find((l) => l.name === listPreview.name);
+          if (!previewList || previewList.tasks.length === 0) return null;
+          const sorted = [...previewList.tasks]
+            .sort((a, b) => (STATUS_ORDER[a.status] ?? 1) - (STATUS_ORDER[b.status] ?? 1) || Number(a.id) - Number(b.id));
+          return (
+            <div
+              className="list-preview-tooltip"
+              style={listPreview.above
+                ? { left: listPreview.x, bottom: window.innerHeight - listPreview.y }
+                : { left: listPreview.x, top: listPreview.y }
+              }
+              onMouseEnter={() => setListPreview(null)}
+            >
+              {sorted.slice(0, 8).map((task) => (
+                <div key={task.id} className={`list-preview-item ${task.status === "completed" ? "preview-completed" : ""}`}>
+                  <span className={`preview-icon ${task.status === "in_progress" ? "status-active" : ""}`}>
+                    {task.status === "completed" ? "✓" : task.status === "in_progress" ? "◉" : "○"}
+                  </span>
+                  <span className="preview-text">{task.subject}</span>
+                </div>
+              ))}
+              {previewList.tasks.length > 8 && (
+                <div className="list-preview-more">+{previewList.tasks.length - 8} more</div>
+              )}
+            </div>
+          );
+        })()}
+
         {/* Context Menu */}
         {contextMenu && (
           <div
@@ -483,7 +549,7 @@ function App() {
   // Screen 2: Task detail
   const currentList = lists.find((l) => l.name === screen.listName);
   const sortedTasks = [...(currentList?.tasks || [])].sort(
-    (a, b) => (STATUS_ORDER[a.status] ?? 1) - (STATUS_ORDER[b.status] ?? 1)
+    (a, b) => (STATUS_ORDER[a.status] ?? 1) - (STATUS_ORDER[b.status] ?? 1) || Number(a.id) - Number(b.id)
   );
 
   // Group tasks by status for section headers

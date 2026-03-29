@@ -201,7 +201,7 @@ test.describe("Phase 3: Screen 2 태스크 상세 + CRUD", () => {
     await expect(page.locator('[data-testid="btn-back"]')).toHaveCount(0);
   });
 
-  test("태스크 텍스트 클릭 → 상태 토글 호출", async ({ page }) => {
+  test("상태 아이콘 클릭 → 드롭다운 → 상태 변경 호출", async ({ page }) => {
     // Track invoke calls
     await page.addInitScript(() => {
       const orig = (window as any).__TAURI_INTERNALS__.invoke;
@@ -220,8 +220,15 @@ test.describe("Phase 3: Screen 2 태스크 상세 + CRUD", () => {
     await page.click('[data-testid="list-card-E2E-Test"]');
     await page.waitForSelector('[data-testid="btn-back"]');
 
-    // Click pending task (id=2) text to toggle status
-    await page.click('[data-testid="task-text-2"]');
+    // Click status icon of pending task (id=2) to open dropdown
+    await page.click('[data-testid="task-status-2"]');
+    await page.waitForTimeout(200);
+
+    // Status dropdown should be visible
+    await expect(page.locator('.status-dropdown')).toBeVisible();
+
+    // Click "In Progress" option in the dropdown
+    await page.click('.status-dropdown-item:nth-child(2)');
     await page.waitForTimeout(300);
 
     const invokes = await page.evaluate(
@@ -232,7 +239,7 @@ test.describe("Phase 3: Screen 2 태스크 상세 + CRUD", () => {
     );
     expect(statusUpdate).toBeTruthy();
     expect(statusUpdate.args.taskId).toBe("2");
-    expect(statusUpdate.args.newStatus).toBe("in_progress"); // pending -> in_progress
+    expect(statusUpdate.args.newStatus).toBe("in_progress");
   });
 
   test("description 호버 → 툴팁 표시", async ({ page }) => {
@@ -285,5 +292,87 @@ test.describe("Phase 3: Screen 2 태스크 상세 + CRUD", () => {
     const deleteCall = invokes.find((i: any) => i.cmd === "delete_task");
     expect(deleteCall).toBeTruthy();
     expect(deleteCall.args.taskId).toBe("3");
+  });
+});
+
+test.describe("List Preview Tooltip (listlist 화면)", () => {
+  async function setupScrollablePage(page: Page) {
+    // Create enough lists to make .content scrollable
+    const makeTasks = (prefix: string) => [
+      { id: "1", subject: `${prefix} Task 1`, description: "", status: "in_progress", blocks: [], blockedBy: [] },
+      { id: "2", subject: `${prefix} Task 2`, description: "", status: "pending", blocks: [], blockedBy: [] },
+      { id: "3", subject: `${prefix} Task 3`, description: "", status: "completed", blocks: [], blockedBy: [] },
+    ];
+    const lists = Array.from({ length: 7 }, (_, i) => {
+      const name = `List-${i + 1}`;
+      const tasks = makeTasks(name);
+      return {
+        name,
+        tasks,
+        total: tasks.length,
+        completed: tasks.filter((t) => t.status === "completed").length,
+        lastUpdated: Date.now(),
+        projectDir: `/Users/test/projects/${name}`,
+      };
+    });
+
+    await page.addInitScript((listsData) => {
+      (window as any).__TAURI_INTERNALS__ = {
+        invoke: async (cmd: string) => {
+          if (cmd === "get_task_lists") return listsData;
+          if (cmd === "get_config") return { terminal: "iterm" };
+          return null;
+        },
+        metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
+        convertFileSrc: (p: string) => p,
+      };
+    }, lists);
+  }
+
+  test("hover 1초 후 프리뷰 툴팁 등장", async ({ page }) => {
+    await setupScrollablePage(page);
+    await page.goto("http://localhost:1420");
+    await page.waitForSelector('[data-testid="app-root"]');
+
+    await page.hover('[data-testid="list-card-List-1"]');
+    await page.waitForTimeout(1100);
+
+    await expect(page.locator('.list-preview-tooltip')).toBeVisible();
+  });
+
+  test("툴팁 보이는 상태에서 스크롤 → 즉시 사라짐", async ({ page }) => {
+    await setupScrollablePage(page);
+    await page.goto("http://localhost:1420");
+    await page.waitForSelector('[data-testid="app-root"]');
+
+    // Hover and wait for tooltip
+    await page.hover('[data-testid="list-card-List-1"]');
+    await page.waitForTimeout(1100);
+    await expect(page.locator('.list-preview-tooltip')).toBeVisible();
+
+    // Scroll the .content div
+    await page.locator('.content').evaluate(el => el.scrollBy(0, 100));
+
+    // Tooltip should disappear immediately (no waitForTimeout)
+    await expect(page.locator('.list-preview-tooltip')).not.toBeVisible();
+  });
+
+  test("hover 대기 중 스크롤 → 툴팁 안 뜸", async ({ page }) => {
+    await setupScrollablePage(page);
+    await page.goto("http://localhost:1420");
+    await page.waitForSelector('[data-testid="app-root"]');
+
+    // Hover but don't wait full 1 second
+    await page.hover('[data-testid="list-card-List-1"]');
+    await page.waitForTimeout(300);
+
+    // Scroll before timer fires
+    await page.locator('.content').evaluate(el => el.scrollBy(0, 100));
+
+    // Wait for timer to have expired
+    await page.waitForTimeout(1000);
+
+    // Tooltip should never have appeared
+    await expect(page.locator('.list-preview-tooltip')).not.toBeVisible();
   });
 });

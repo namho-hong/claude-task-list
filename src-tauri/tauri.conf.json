@@ -50,7 +50,7 @@
         "Resources/Assets.car": "./gen/macos/Assets.car"
       },
       "minimumSystemVersion": "",
-      "signingIdentity": null
+      "signingIdentity": "Developer ID Application: OFFLIGHT Inc. (3V648FU6PC)"
     }
   }
 }

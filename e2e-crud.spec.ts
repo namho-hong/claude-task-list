@@ -225,7 +225,7 @@ test.describe("Phase 4: CRUD 검증", () => {
 
   // === UPDATE ===
   test.describe("Update", () => {
-    test("U1/U3: 상태 토글 (pending -> in_progress -> completed -> pending)", async ({ page }) => {
+    test("U1/U3: 상태 드롭다운으로 변경 (pending -> in_progress)", async ({ page }) => {
       const tasks = [
         { id: "1", subject: "Toggle Task", description: "", status: "pending", blocks: [], blockedBy: [] },
       ];
@@ -241,8 +241,10 @@ test.describe("Phase 4: CRUD 검증", () => {
       let status = await page.locator('[data-testid="task-status-1"]').textContent();
       expect(status?.trim()).toBe("○");
 
-      // Click to toggle: pending -> in_progress
-      await page.click('[data-testid="task-text-1"]');
+      // Click status icon to open dropdown, then select In Progress
+      await page.click('[data-testid="task-status-1"]');
+      await page.waitForTimeout(200);
+      await page.click('.status-dropdown-item:nth-child(2)');
       await page.waitForTimeout(300);
 
       const invokes1 = await page.evaluate(() => (window as any).__e2e_invokes__);
@@ -250,7 +252,7 @@ test.describe("Phase 4: CRUD 검증", () => {
       expect(update1.args.newStatus).toBe("in_progress");
     });
 
-    test("U2: 상태 변경 후 update_task_status 호출 확인", async ({ page }) => {
+    test("U2: 상태 드롭다운으로 변경 후 update_task_status 호출 확인", async ({ page }) => {
       const tasks = [
         { id: "1", subject: "Update Check", description: "", status: "in_progress", blocks: [], blockedBy: [] },
       ];
@@ -262,7 +264,10 @@ test.describe("Phase 4: CRUD 검증", () => {
       await page.click('[data-testid="list-card-UpdateCheck"]');
       await page.waitForSelector('[data-testid="btn-back"]');
 
-      await page.click('[data-testid="task-text-1"]');
+      // Click status icon to open dropdown, then select Completed
+      await page.click('[data-testid="task-status-1"]');
+      await page.waitForTimeout(200);
+      await page.click('.status-dropdown-item:nth-child(3)');
       await page.waitForTimeout(300);
 
       const invokes = await page.evaluate(() => (window as any).__e2e_invokes__);
