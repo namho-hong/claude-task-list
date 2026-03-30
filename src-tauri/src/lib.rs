@@ -1043,31 +1043,7 @@ fn spawn_task(list_name: String, task_id: String) -> Result<(), String> {
     let flag = get_spawn_mode_flag();
 
     // Check if session file actually exists before attempting resume
-    let can_resume = status == "in_progress"
-        && existing_session_id.is_some()
-        && {
-            let sid = existing_session_id.as_ref().unwrap();
-            let home = dirs::home_dir().unwrap_or_default();
-            let sessions_dir = home.join(".claude").join("sessions");
-            if sessions_dir.exists() {
-                // Session files are named by PID; search for matching sessionId
-                fs::read_dir(&sessions_dir)
-                    .map(|entries| {
-                        entries.filter_map(|e| e.ok()).any(|entry| {
-                            fs::read_to_string(entry.path())
-                                .ok()
-                                .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
-                                .map(|v| v.get("sessionId").and_then(|s| s.as_str()).map(|s| s == sid).unwrap_or(false))
-                                .unwrap_or(false)
-                        })
-                    })
-                    .unwrap_or(false)
-            } else {
-                false
-            }
-        };
-
-    if can_resume {
+    if status == "in_progress" && existing_session_id.is_some() {
         // Resume existing session
         let session_id = existing_session_id.unwrap();
         let resume_cd = find_session_project_dir(&session_id)
