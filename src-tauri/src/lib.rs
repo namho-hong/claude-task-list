@@ -1269,6 +1269,10 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .invoke_handler(tauri::generate_handler![
             get_task_lists,
             get_tasks,
@@ -1292,6 +1296,16 @@ pub fn run() {
             set_spawn_mode,
         ])
         .setup(|app| {
+            // Enable autostart on first launch
+            #[cfg(desktop)]
+            {
+                use tauri_plugin_autostart::ManagerExt;
+                let autostart = app.autolaunch();
+                if !autostart.is_enabled().unwrap_or(false) {
+                    let _ = autostart.enable();
+                }
+            }
+
             // Register global shortcut Command+Y to toggle window
             #[cfg(desktop)]
             {
