@@ -1,6 +1,8 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { check, type Update } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import "./App.css";
 
 // Clawd - Claude Code's 8-bit pixel art robot mascot
@@ -80,6 +82,15 @@ function App() {
   const [renameValue, setRenameValue] = useState("");
   const [renamingCard, setRenamingCard] = useState<string | null>(null);
   const [cardRenameValue, setCardRenameValue] = useState("");
+
+  // Auto-update state
+  const [updateState, setUpdateState] = useState<
+    | { status: "idle" }
+    | { status: "available"; update: Update }
+    | { status: "downloading"; progress: number }
+    | { status: "ready" }
+    | { status: "error" }
+  >({ status: "idle" });
   const [focusedIndex, setFocusedIndex] = useState(0);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [editingTaskValue, setEditingTaskValue] = useState("");
@@ -103,6 +114,55 @@ function App() {
       console.error("[frontend] Failed to load lists:", err);
     }
   }, []);
+
+  // Check for app updates on mount
+  useEffect(() => {
+    check()
+      .then((update) => {
+        if (update) {
+          setUpdateState({ status: "available", update });
+        }
+      })
+      .catch((err) => {
+        console.error("[updater] check failed:", err);
+      });
+  }, []);
+
+  const handleUpdate = useCallback(async () => {
+    if (updateState.status !== "available") return;
+    const { update } = updateState;
+    try {
+      setUpdateState({ status: "downloading", progress: 0 });
+      let downloaded = 0;
+      let contentLength = 0;
+      await update.downloadAndInstall((event) => {
+        switch (event.event) {
+          case "Started":
+            contentLength = event.data.contentLength ?? 0;
+            break;
+          case "Progress":
+            downloaded += event.data.chunkLength;
+            if (contentLength > 0) {
+              setUpdateState({
+                status: "downloading",
+                progress: Math.round((downloaded / contentLength) * 100),
+              });
+            }
+            break;
+          case "Finished":
+            break;
+        }
+      });
+      setUpdateState({ status: "ready" });
+    } catch (err) {
+      console.error("[updater] download failed:", err);
+      setUpdateState({ status: "error" });
+      // Revert to available after 3s so user can retry
+      setTimeout(() => {
+        setUpdateState({ status: "available", update });
+      }, 3000);
+    }
+  }, [updateState]);
 
   useEffect(() => {
     loadLists();
@@ -458,6 +518,39 @@ function App() {
     return Math.round((list.completed / list.total) * 100);
   };
 
+  const renderUpdateButton = () => {
+    if (updateState.status === "idle") return null;
+    if (updateState.status === "available") {
+      return (
+        <button className="update-btn" onClick={handleUpdate}>
+          ⬆ Update
+        </button>
+      );
+    }
+    if (updateState.status === "downloading") {
+      return (
+        <button className="update-btn update-btn-progress" disabled>
+          ⬇ {updateState.progress}%
+        </button>
+      );
+    }
+    if (updateState.status === "ready") {
+      return (
+        <button className="update-btn update-btn-restart" onClick={() => relaunch()}>
+          ↻ Restart
+        </button>
+      );
+    }
+    if (updateState.status === "error") {
+      return (
+        <button className="update-btn update-btn-error" disabled>
+          ⬆ Update
+        </button>
+      );
+    }
+    return null;
+  };
+
   // Screen 1: List selection
   if (screen.type === "listlist") {
     return (
@@ -465,6 +558,7 @@ function App() {
         <div className="header">
           <ClaudeIcon size={22} />
           <span className="header-title">Claude Task List</span>
+          {renderUpdateButton()}
           <select
             className="header-terminal-select"
             value={terminal}
@@ -789,6 +883,7 @@ function App() {
         ) : (
           <span className="header-title">{screen.listName}</span>
         )}
+        {renderUpdateButton()}
         <div className="header-actions">
           <button
             className="btn-spawn"

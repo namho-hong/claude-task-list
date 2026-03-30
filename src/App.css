@@ -47,6 +47,44 @@ body {
   flex: 1;
 }
 
+/* Update button */
+.update-btn {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(218, 119, 86, 0.15);
+  border: 1px solid rgba(218, 119, 86, 0.3);
+  color: #DA7756;
+  cursor: pointer;
+  transition: background 0.15s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.update-btn:hover:not(:disabled) {
+  background: rgba(218, 119, 86, 0.3);
+}
+
+.update-btn-progress {
+  cursor: default;
+  opacity: 0.8;
+}
+
+.update-btn-restart {
+  background: rgba(86, 182, 218, 0.15);
+  border-color: rgba(86, 182, 218, 0.3);
+  color: #56b6da;
+}
+
+.update-btn-restart:hover {
+  background: rgba(86, 182, 218, 0.3);
+}
+
+.update-btn-error {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .divider {
   height: 1px;
   background: rgba(255, 255, 255, 0.06);
