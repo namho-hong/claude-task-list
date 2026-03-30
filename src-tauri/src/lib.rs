@@ -175,10 +175,12 @@ fn get_task_lists() -> Vec<TaskList> {
             let completed = tasks.iter().filter(|t| t.status == "completed").count();
             let project_dir = read_project_dir(&name).or_else(|| {
                 if is_uuid(&name) {
-                    if let Some(dir) = find_session_project_dir(&name) {
-                        let _ = write_project_dir(&name, &dir);
-                        return Some(dir);
+                    let dir = find_session_project_dir(&name)
+                        .or_else(|| find_list_project_dir_from_tasks(&name));
+                    if let Some(ref d) = dir {
+                        let _ = write_project_dir(&name, d);
                     }
+                    return dir;
                 }
                 None
             });
@@ -585,6 +587,35 @@ fn read_cwd_from_jsonl(path: &std::path::Path) -> Option<String> {
     None
 }
 
+/// Find project dir for a UUID list by scanning its tasks' session_ids
+fn find_list_project_dir_from_tasks(list_name: &str) -> Option<String> {
+    let dir = tasks_dir().join(list_name);
+    if !dir.is_dir() {
+        return None;
+    }
+    if let Ok(files) = fs::read_dir(&dir) {
+        for file in files.flatten() {
+            let path = file.path();
+            if path.extension().map_or(false, |e| e == "json") {
+                let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+                if stem == "0" || stem == "999" || stem == "_meta" {
+                    continue;
+                }
+                if let Ok(content) = fs::read_to_string(&path) {
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                        if let Some(sid) = val.pointer("/metadata/session_id").and_then(|v| v.as_str()) {
+                            if let Some(pdir) = find_session_project_dir(sid) {
+                                return Some(pdir);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Find the project directory where a session was originally run
 /// by reading the cwd field from the session JSONL file
 fn find_session_project_dir(session_id: &str) -> Option<String> {
@@ -751,7 +782,12 @@ fn spawn_list(list_name: String) -> Result<(), String> {
     if is_uuid(&list_name) {
         // Unnamed session: use task list ID with project directory if available
         let project_dir = read_project_dir(&list_name)
-            .or_else(|| find_session_project_dir(&list_name));
+            .or_else(|| find_session_project_dir(&list_name))
+            .or_else(|| find_list_project_dir_from_tasks(&list_name));
+        if let Some(ref dir) = project_dir {
+            // Cache to _meta.json for future spawns
+            let _ = write_project_dir(&list_name, dir);
+        }
         let command = if let Some(dir) = project_dir {
             format!("cd \"{}\" && CLAUDE_CODE_TASK_LIST_ID={} claude", dir, list_name)
         } else {
@@ -827,16 +863,26 @@ fn spawn_task(list_name: String, task_id: String) -> Result<(), String> {
         .and_then(|s| s.as_str())
         .map(|s| s.to_string());
 
-    // Resolve project directory for cd prefix
-    let cd_prefix = if !is_uuid(&list_name) {
-        if let Some(project_dir) = read_project_dir(&list_name) {
-            let _ = fs::create_dir_all(&project_dir);
-            format!("cd \"{}\" && ", project_dir)
+    // Resolve project directory for cd prefix (both named and UUID lists)
+    let cd_prefix = {
+        let project_dir = read_project_dir(&list_name).or_else(|| {
+            if is_uuid(&list_name) {
+                find_session_project_dir(&list_name)
+                    .or_else(|| find_list_project_dir_from_tasks(&list_name))
+            } else {
+                None
+            }
+        });
+        if let Some(ref dir) = project_dir {
+            let _ = fs::create_dir_all(dir);
+            // Cache to _meta.json for future spawns
+            if is_uuid(&list_name) {
+                let _ = write_project_dir(&list_name, dir);
+            }
+            format!("cd \"{}\" && ", dir)
         } else {
             String::new()
         }
-    } else {
-        String::new()
     };
 
     // Build prompt for task context
