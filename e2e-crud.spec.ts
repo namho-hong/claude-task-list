@@ -76,6 +76,8 @@ function setupMockWithTracking(listsData: any[]) {
         if (cmd === "spawn_list") return null;
         if (cmd === "spawn_task") return null;
         if (cmd === "set_terminal") return "ok";
+        if (cmd === "show_tooltip") return null;
+        if (cmd === "hide_tooltip") return null;
         return null;
       },
       metadata: {

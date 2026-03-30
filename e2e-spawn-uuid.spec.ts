@@ -56,6 +56,8 @@ function setupMock(page: Page) {
         if (cmd === "set_project_dir") return null;
         if (cmd === "init_project_dir") return "/tmp/test";
         if (cmd === "pick_directory") return null;
+        if (cmd === "show_tooltip") return null;
+        if (cmd === "hide_tooltip") return null;
         return null;
       },
     };

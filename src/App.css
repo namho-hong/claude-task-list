@@ -18,7 +18,7 @@ body {
 
 .app-container {
   height: 100vh;
-  background: rgba(20, 20, 22, 0.55);
+  background: rgba(14, 14, 16, 0.92);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 12px;
   display: flex;
@@ -142,6 +142,12 @@ body {
   color: #f0f0f0;
 }
 
+.confirm-delete {
+  color: #f87171;
+  font-size: 12px;
+  font-weight: 400;
+}
+
 .list-count {
   font-size: 12px;
   color: rgba(255, 255, 255, 0.4);
@@ -188,54 +194,7 @@ body {
   min-width: 0;
 }
 
-.list-preview-tooltip {
-  position: fixed;
-  background: rgba(30, 30, 34, 0.95);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
-  padding: 8px 10px;
-  z-index: 150;
-  backdrop-filter: blur(12px);
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  width: 90%;
-  left: 50% !important;
-  transform: translateX(-50%);
-  pointer-events: auto;
-}
-
-.list-preview-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.6);
-}
-
-.list-preview-item.preview-completed {
-  color: rgba(255, 255, 255, 0.3);
-}
-
-.preview-icon {
-  font-size: 10px;
-  width: 14px;
-  text-align: center;
-  flex-shrink: 0;
-}
-
-.preview-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.list-preview-more {
-  font-size: 10px;
-  color: rgba(255, 255, 255, 0.25);
-  margin-top: 2px;
-  padding-left: 20px;
-}
+/* List preview tooltip — now rendered in secondary tooltip window */
 
 .list-project-dir {
   font-size: 11px;
@@ -246,11 +205,11 @@ body {
   white-space: nowrap;
 }
 
-.list-project-dir.clickable {
+.list-project-dir .clickable {
   cursor: pointer;
 }
 
-.list-project-dir.clickable:hover {
+.list-project-dir .clickable:hover {
   color: rgba(255, 255, 255, 0.5);
 }
 
@@ -432,7 +391,8 @@ body {
   color: rgba(255, 255, 255, 0.7);
 }
 
-.status-dropdown-item:hover {
+.status-dropdown-item:hover,
+.status-dropdown-item.focused {
   background: rgba(255, 255, 255, 0.1);
 }
 
@@ -504,6 +464,34 @@ body {
 }
 
 /* Add task row */
+/* Bottom bar — fixed at bottom of screen */
+.bottom-bar {
+  flex-shrink: 0;
+  padding: 8px 12px 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.bottom-bar-input {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.bottom-bar-action {
+  text-align: center;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 12px;
+  padding: 6px 0;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.bottom-bar-action:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.6);
+}
+
 .add-task-row {
   display: flex;
   gap: 8px;
@@ -529,23 +517,7 @@ body {
   background: rgba(218, 119, 86, 0.4);
 }
 
-/* Tooltip */
-.tooltip {
-  position: fixed;
-  transform: translateY(-100%);
-  background: rgba(50, 50, 50, 0.95);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 6px;
-  padding: 6px 10px;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.8);
-  max-width: 280px;
-  pointer-events: none;
-  z-index: 100;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
+/* Tooltip — now rendered in secondary tooltip window */
 
 /* Settings */
 .header-terminal-select {

@@ -31,6 +31,8 @@ function setupMock(listsData: any[]) {
         if (cmd === "spawn_task") return null;
         if (cmd === "hide_window") return null;
         if (cmd === "set_terminal") return "ok";
+        if (cmd === "show_tooltip") return null;
+        if (cmd === "hide_tooltip") return null;
         return null;
       },
       metadata: {
@@ -306,20 +308,26 @@ test.describe("Keyboard Navigation", () => {
       await expect(page.locator('[data-testid="list-card-Alpha"]')).toBeVisible();
     });
 
-    test("Tooltip appears after 1s dwell on focused task", async ({ page }) => {
+    test("Tooltip invokes show_tooltip after 1s dwell on focused task", async ({ page }) => {
       await enterAlpha(page);
 
       // First task (Task A1) has description "desc"
-      // Wait 1.2s for tooltip to appear
+      // Wait 1.2s for tooltip invoke
       await page.waitForTimeout(1200);
 
-      const tooltip = page.locator('[data-testid="task-tooltip-1"]');
-      await expect(tooltip).toBeVisible();
+      const invokes = await getInvokes(page);
+      const showCall = invokes.find((i: any) => i.cmd === "show_tooltip");
+      expect(showCall).toBeTruthy();
+      expect(showCall.args.payload.type).toBe("text");
+      expect(showCall.args.payload.text).toBe("desc");
 
-      // Move to next task — tooltip should dismiss
+      // Move to next task — hide_tooltip should be called
+      await page.evaluate(() => { (window as any).__e2e_invokes__ = []; });
       await page.keyboard.press("ArrowDown");
       await page.waitForTimeout(200);
-      await expect(tooltip).not.toBeVisible();
+      const invokes2 = await getInvokes(page);
+      const hideCall = invokes2.find((i: any) => i.cmd === "hide_tooltip");
+      expect(hideCall).toBeTruthy();
     });
   });
 

@@ -15,7 +15,7 @@
         "label": "main",
         "title": "Claude Task List",
         "width": 380,
-        "height": 520,
+        "height": 780,
         "resizable": false,
         "decorations": false,
         "transparent": true,
@@ -40,12 +40,7 @@
         "visible": false,
         "skipTaskbar": true,
         "alwaysOnTop": true,
-        "focusable": false,
-        "windowEffects": {
-          "effects": ["hudWindow"],
-          "state": "active",
-          "radius": 8.0
-        }
+        "focusable": false
       }
     ],
     "macOSPrivateApi": true,

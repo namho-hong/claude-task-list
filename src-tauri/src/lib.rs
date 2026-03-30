@@ -10,6 +10,28 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 static LAST_WINDOW_POS: std::sync::LazyLock<std::sync::Mutex<(i32, i32)>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new((0, 0)));
 
+// Global: tray icon ID for position lookups
+static TRAY_ID: std::sync::LazyLock<std::sync::Mutex<Option<tauri::tray::TrayIconId>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
+
+fn calc_window_pos_from_tray(app: &tauri::AppHandle) -> Option<(i32, i32)> {
+    let tray_id = TRAY_ID.lock().ok()?.clone()?;
+    let tray = app.tray_by_id(&tray_id)?;
+    let rect = tray.rect().ok()??;
+    let (tx, ty) = match rect.position {
+        tauri::Position::Physical(p) => (p.x as f64, p.y as f64),
+        tauri::Position::Logical(p) => (p.x, p.y),
+    };
+    let (tw, th) = match rect.size {
+        tauri::Size::Physical(s) => (s.width as f64, s.height as f64),
+        tauri::Size::Logical(s) => (s.width, s.height),
+    };
+    let win_width = 380.0;
+    let x = (tx + (tw / 2.0) - (win_width / 2.0)) as i32;
+    let y = (ty + th + 4.0) as i32;
+    Some((x, y))
+}
+
 fn uuid_v4() -> String {
     // Simple UUID v4 generation using system time + random-ish bits
     let now = SystemTime::now()
@@ -534,9 +556,126 @@ fn set_terminal(terminal: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn set_spawn_mode(mode: String) -> Result<String, String> {
+    let path = config_path();
+    let mut config = if let Ok(content) = fs::read_to_string(&path) {
+        serde_json::from_str::<serde_json::Value>(&content).unwrap_or(serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+    config["spawnMode"] = serde_json::Value::String(mode);
+    let content = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
+    fs::write(&path, content).map_err(|e| e.to_string())?;
+    Ok("ok".to_string())
+}
+
+fn get_spawn_mode_flag() -> String {
+    if let Ok(content) = fs::read_to_string(config_path()) {
+        if let Ok(config) = serde_json::from_str::<serde_json::Value>(&content) {
+            if config.get("spawnMode").and_then(|v| v.as_str()) == Some("dangerously-skip-permissions") {
+                return " --dangerously-skip-permissions".to_string();
+            }
+        }
+    }
+    String::new()
+}
+
+fn hide_all_windows(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.hide();
+    }
+    if let Some(w) = app.get_webview_window("tooltip") {
+        let _ = w.hide();
+    }
+}
+
+#[tauri::command]
 fn hide_window(app: tauri::AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("main") {
-        window.hide().map_err(|e| e.to_string())?;
+    hide_all_windows(&app);
+    Ok(())
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct TooltipItem {
+    subject: String,
+    status: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(tag = "type")]
+enum TooltipPayload {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "list")]
+    List {
+        items: Vec<TooltipItem>,
+        #[serde(rename = "moreCount")]
+        more_count: usize,
+    },
+}
+
+#[tauri::command]
+fn show_tooltip(
+    app: tauri::AppHandle,
+    payload: TooltipPayload,
+    item_y: f64,
+    _item_height: f64,
+) -> Result<(), String> {
+    let tooltip_win = app
+        .get_webview_window("tooltip")
+        .ok_or("tooltip window not found")?;
+    let main_win = app
+        .get_webview_window("main")
+        .ok_or("main window not found")?;
+
+    // Don't show tooltip if main window is hidden
+    if !main_win.is_visible().unwrap_or(false) {
+        return Ok(());
+    }
+
+    let main_pos = main_win.outer_position().map_err(|e| e.to_string())?;
+    let scale = main_win.scale_factor().unwrap_or(2.0);
+
+    // Calculate tooltip size based on content type
+    let tooltip_w: f64 = 300.0;
+    let tooltip_h: f64 = match &payload {
+        TooltipPayload::Text { text } => {
+            let lines = (text.len() as f64 / 30.0).ceil().max(1.0);
+            (lines * 20.0 + 24.0).min(240.0)
+        }
+        TooltipPayload::List { items, more_count } => {
+            let item_count = items.len() as f64;
+            let more_line = if *more_count > 0 { 24.0 } else { 0.0 };
+            item_count * 28.0 + 20.0 + more_line
+        }
+    };
+
+    // Position: left of main window, vertically aligned with hovered item
+    let gap = 8.0;
+    let main_x = main_pos.x as f64 / scale;
+    let main_y = main_pos.y as f64 / scale;
+    let tooltip_x = main_x - tooltip_w - gap;
+    let tooltip_y = main_y + item_y;
+
+    tooltip_win
+        .set_size(tauri::LogicalSize::new(tooltip_w, tooltip_h))
+        .map_err(|e| e.to_string())?;
+    tooltip_win
+        .set_position(tauri::LogicalPosition::new(tooltip_x, tooltip_y))
+        .map_err(|e| e.to_string())?;
+
+    app.emit_to("tooltip", "tooltip-update", &payload)
+        .map_err(|e| e.to_string())?;
+
+    tooltip_win.show().map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+fn hide_tooltip(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(tooltip_win) = app.get_webview_window("tooltip") {
+        let _ = tooltip_win.hide();
     }
     Ok(())
 }
@@ -788,26 +927,28 @@ fn spawn_list(list_name: String) -> Result<(), String> {
             // Cache to _meta.json for future spawns
             let _ = write_project_dir(&list_name, dir);
         }
+        let flag = get_spawn_mode_flag();
         let command = if let Some(dir) = project_dir {
-            format!("cd \"{}\" && CLAUDE_CODE_TASK_LIST_ID={} claude", dir, list_name)
+            format!("cd \"{}\" && CLAUDE_CODE_TASK_LIST_ID={} claude{}", dir, list_name, flag)
         } else {
-            format!("CLAUDE_CODE_TASK_LIST_ID={} claude", list_name)
+            format!("CLAUDE_CODE_TASK_LIST_ID={} claude{}", list_name, flag)
         };
         return spawn_in_terminal(&command);
     }
 
     // Named list: use _meta.json project_dir
+    let flag = get_spawn_mode_flag();
     if let Some(project_dir) = read_project_dir(&list_name) {
         // Re-create directory if it was deleted
         let _ = fs::create_dir_all(&project_dir);
         let command = format!(
-            "cd \"{}\" && CLAUDE_CODE_TASK_LIST_ID={} claude",
-            project_dir, list_name
+            "cd \"{}\" && CLAUDE_CODE_TASK_LIST_ID={} claude{}",
+            project_dir, list_name, flag
         );
         spawn_in_terminal(&command)
     } else {
         // Fallback: no _meta.json (legacy list)
-        let command = format!("CLAUDE_CODE_TASK_LIST_ID={} claude", list_name);
+        let command = format!("CLAUDE_CODE_TASK_LIST_ID={} claude{}", list_name, flag);
         spawn_in_terminal(&command)
     }
 }
@@ -899,15 +1040,42 @@ fn spawn_task(list_name: String, task_id: String) -> Result<(), String> {
     ));
     let escaped_prompt = prompt.replace('\'', "'\\''");
 
-    if status == "in_progress" && existing_session_id.is_some() {
-        // Resume existing session — cd to where the session was originally created
+    let flag = get_spawn_mode_flag();
+
+    // Check if session file actually exists before attempting resume
+    let can_resume = status == "in_progress"
+        && existing_session_id.is_some()
+        && {
+            let sid = existing_session_id.as_ref().unwrap();
+            let home = dirs::home_dir().unwrap_or_default();
+            let sessions_dir = home.join(".claude").join("sessions");
+            if sessions_dir.exists() {
+                // Session files are named by PID; search for matching sessionId
+                fs::read_dir(&sessions_dir)
+                    .map(|entries| {
+                        entries.filter_map(|e| e.ok()).any(|entry| {
+                            fs::read_to_string(entry.path())
+                                .ok()
+                                .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+                                .map(|v| v.get("sessionId").and_then(|s| s.as_str()).map(|s| s == sid).unwrap_or(false))
+                                .unwrap_or(false)
+                        })
+                    })
+                    .unwrap_or(false)
+            } else {
+                false
+            }
+        };
+
+    if can_resume {
+        // Resume existing session
         let session_id = existing_session_id.unwrap();
         let resume_cd = find_session_project_dir(&session_id)
             .map(|dir| format!("cd \"{}\" && ", dir))
             .unwrap_or_else(|| cd_prefix.clone());
         let command = format!(
-            "{}CLAUDE_CODE_TASK_LIST_ID={} claude --resume {} $'{}'",
-            resume_cd, list_name, session_id, escaped_prompt
+            "{}CLAUDE_CODE_TASK_LIST_ID={} claude{} --resume {} $'{}'",
+            resume_cd, list_name, flag, session_id, escaped_prompt
         );
         spawn_in_terminal(&command)
     } else {
@@ -924,8 +1092,8 @@ fn spawn_task(list_name: String, task_id: String) -> Result<(), String> {
         fs::write(&task_path, updated).map_err(|e| e.to_string())?;
 
         let command = format!(
-            "{}CLAUDE_CODE_TASK_LIST_ID={} claude --session-id {} $'{}'",
-            cd_prefix, list_name, session_id, escaped_prompt
+            "{}CLAUDE_CODE_TASK_LIST_ID={} claude{} --session-id {} $'{}'",
+            cd_prefix, list_name, flag, session_id, escaped_prompt
         );
         spawn_in_terminal(&command)
     }
@@ -1143,6 +1311,9 @@ pub fn run() {
             init_project_dir,
             pick_directory,
             hide_window,
+            show_tooltip,
+            hide_tooltip,
+            set_spawn_mode,
         ])
         .setup(|app| {
             // Register global shortcut Command+Y to toggle window
@@ -1159,13 +1330,17 @@ pub fn run() {
                             {
                                 if let Some(window) = app.get_webview_window("main") {
                                     if window.is_visible().unwrap_or(false) {
-                                        let _ = window.hide();
+                                        hide_all_windows(app);
                                     } else {
-                                        if let Ok(pos) = LAST_WINDOW_POS.lock() {
-                                            if pos.0 != 0 || pos.1 != 0 {
-                                                let _ = window.set_position(
-                                                    tauri::PhysicalPosition::new(pos.0, pos.1),
-                                                );
+                                        let pos = LAST_WINDOW_POS.lock().ok()
+                                            .and_then(|p| if p.0 != 0 || p.1 != 0 { Some((p.0, p.1)) } else { None })
+                                            .or_else(|| calc_window_pos_from_tray(app));
+                                        if let Some((x, y)) = pos {
+                                            let _ = window.set_position(
+                                                tauri::PhysicalPosition::new(x, y),
+                                            );
+                                            if let Ok(mut p) = LAST_WINDOW_POS.lock() {
+                                                *p = (x, y);
                                             }
                                         }
                                         let _ = window.show();
@@ -1225,7 +1400,7 @@ pub fn run() {
                         let app = tray.app_handle();
                         if let Some(window) = app.get_webview_window("main") {
                             if window.is_visible().unwrap_or(false) {
-                                let _ = window.hide();
+                                hide_all_windows(app);
                             } else {
                                 // Extract tray icon position and size
                                 let (tray_x, tray_y) = match rect.position {
@@ -1243,8 +1418,8 @@ pub fn run() {
 
                                 // Center window horizontally under tray icon
                                 let x = tray_x + (tray_width / 2.0) - (win_width / 2.0);
-                                // Place directly below tray icon
-                                let y = tray_y + tray_height;
+                                // Place below tray icon with small gap
+                                let y = tray_y + tray_height + 4.0;
 
                                 let pos_x = x as i32;
                                 let pos_y = y as i32;
@@ -1274,23 +1449,30 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // Initialize window position from tray icon rect
-            if let Ok(Some(rect)) = tray.rect() {
-                let (tx, ty) = match rect.position {
-                    tauri::Position::Physical(p) => (p.x as f64, p.y as f64),
-                    tauri::Position::Logical(p) => (p.x, p.y),
-                };
-                let (tw, th) = match rect.size {
-                    tauri::Size::Physical(s) => (s.width as f64, s.height as f64),
-                    tauri::Size::Logical(s) => (s.width, s.height),
-                };
-                let win_width = 380.0;
-                let x = (tx + (tw / 2.0) - (win_width / 2.0)) as i32;
-                let y = (ty + th) as i32;
-                if let Ok(mut pos) = LAST_WINDOW_POS.lock() {
-                    *pos = (x, y);
-                }
+            // Save tray ID for later position lookups
+            if let Ok(mut id) = TRAY_ID.lock() {
+                *id = Some(tray.id().clone());
             }
+
+            // Show window on first launch after a short delay (tray needs time to settle)
+            let app_handle_for_init = app.handle().clone();
+            let last_shown_for_init = last_shown.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(500));
+                if let Some(pos) = calc_window_pos_from_tray(&app_handle_for_init) {
+                    if let Ok(mut p) = LAST_WINDOW_POS.lock() {
+                        *p = pos;
+                    }
+                    if let Some(window) = app_handle_for_init.get_webview_window("main") {
+                        let _ = window.set_position(tauri::PhysicalPosition::new(pos.0, pos.1));
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                        if let Ok(mut t) = last_shown_for_init.lock() {
+                            *t = Instant::now();
+                        }
+                    }
+                }
+            });
 
             // Listen for window focus lost → auto-hide
             let app_handle_for_focus = app.handle().clone();
@@ -1316,9 +1498,7 @@ pub fn run() {
                                     return;
                                 }
                             }
-                            if let Some(win) = app_ref.get_webview_window("main") {
-                                let _ = win.hide();
-                            }
+                            hide_all_windows(&app_ref);
                         });
                     }
                 });

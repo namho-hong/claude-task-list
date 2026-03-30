@@ -82,6 +82,8 @@ async function setupPage(page: Page) {
       if (cmd === "create_list") return null;
       if (cmd === "spawn_list") return null;
       if (cmd === "spawn_task") return null;
+      if (cmd === "show_tooltip") return null;
+      if (cmd === "hide_tooltip") return null;
       return null;
     };
 
@@ -242,18 +244,36 @@ test.describe("Phase 3: Screen 2 태스크 상세 + CRUD", () => {
     expect(statusUpdate.args.newStatus).toBe("in_progress");
   });
 
-  test("description 호버 → 툴팁 표시", async ({ page }) => {
+  test("description 호버 → 보조 윈도우 tooltip invoke 호출", async ({ page }) => {
+    // Start tracking invokes before navigating
+    await page.evaluate(() => {
+      const w = window as any;
+      w.__e2e_invokes__ = [];
+      const orig = w.__TAURI_INTERNALS__.invoke;
+      w.__TAURI_INTERNALS__.invoke = async (cmd: any, args: any) => {
+        w.__e2e_invokes__.push({ cmd, args });
+        return orig(cmd, args);
+      };
+    });
+
     await page.click('[data-testid="list-card-E2E-Test"]');
     await page.waitForSelector('[data-testid="btn-back"]');
 
-    // Task 1 has description "feature/auth 브랜치 PR 리뷰 필요"
-    await page.hover('[data-testid="task-text-1"]');
-    await page.waitForTimeout(200);
+    // Clear invokes from navigation
+    await page.evaluate(() => { (window as any).__e2e_invokes__ = []; });
 
-    const tooltip = page.locator('[data-testid="task-tooltip-1"]');
-    await expect(tooltip).toBeVisible();
-    const tooltipText = await tooltip.textContent();
-    expect(tooltipText).toContain("feature/auth");
+    // Task 1 has description "feature/auth 브랜치 PR 리뷰 필요"
+    await page.waitForSelector('[data-testid="task-text-1"]');
+    await page.hover('[data-testid="task-text-1"]');
+    await page.waitForTimeout(600); // wait for 400ms delay + margin
+
+    const invokes = await page.evaluate(() => (window as any).__e2e_invokes__);
+    const showCalls = invokes.filter((i: any) => i.cmd === "show_tooltip");
+    expect(showCalls.length).toBeGreaterThan(0);
+    // Get the last show_tooltip call (the task text one)
+    const showCall = showCalls[showCalls.length - 1];
+    expect(showCall.args.payload.type).toBe("text");
+    expect(showCall.args.payload.text).toContain("feature/auth");
   });
 
   test("우클릭 → 컨텍스트 메뉴 → Delete 클릭", async ({ page }) => {
@@ -317,10 +337,14 @@ test.describe("List Preview Tooltip (listlist 화면)", () => {
     });
 
     await page.addInitScript((listsData) => {
+      (window as any).__e2e_invokes__ = [];
       (window as any).__TAURI_INTERNALS__ = {
-        invoke: async (cmd: string) => {
+        invoke: async (cmd: string, args?: any) => {
+          (window as any).__e2e_invokes__.push({ cmd, args });
           if (cmd === "get_task_lists") return listsData;
           if (cmd === "get_config") return { terminal: "iterm" };
+          if (cmd === "show_tooltip") return null;
+          if (cmd === "hide_tooltip") return null;
           return null;
         },
         metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
@@ -329,50 +353,62 @@ test.describe("List Preview Tooltip (listlist 화면)", () => {
     }, lists);
   }
 
-  test("hover 1초 후 프리뷰 툴팁 등장", async ({ page }) => {
+  test("hover 400ms 후 show_tooltip invoke 호출", async ({ page }) => {
     await setupScrollablePage(page);
     await page.goto("http://localhost:1420");
     await page.waitForSelector('[data-testid="app-root"]');
 
     await page.hover('[data-testid="list-card-List-1"]');
-    await page.waitForTimeout(1100);
+    await page.waitForTimeout(500);
 
-    await expect(page.locator('.list-preview-tooltip')).toBeVisible();
+    const invokes = await page.evaluate(() => (window as any).__e2e_invokes__);
+    const showCall = invokes.find((i: any) => i.cmd === "show_tooltip");
+    expect(showCall).toBeTruthy();
+    expect(showCall.args.payload.type).toBe("list");
+    expect(showCall.args.payload.items.length).toBeGreaterThan(0);
   });
 
-  test("툴팁 보이는 상태에서 스크롤 → 즉시 사라짐", async ({ page }) => {
+  test("스크롤 시 show_tooltip 재호출로 위치 추적", async ({ page }) => {
     await setupScrollablePage(page);
     await page.goto("http://localhost:1420");
     await page.waitForSelector('[data-testid="app-root"]');
 
     // Hover and wait for tooltip
     await page.hover('[data-testid="list-card-List-1"]');
-    await page.waitForTimeout(1100);
-    await expect(page.locator('.list-preview-tooltip')).toBeVisible();
+    await page.waitForTimeout(500);
+
+    // Clear invokes
+    await page.evaluate(() => { (window as any).__e2e_invokes__ = []; });
 
     // Scroll the .content div
     await page.locator('.content').evaluate(el => el.scrollBy(0, 100));
+    await page.waitForTimeout(100);
 
-    // Tooltip should disappear immediately (no waitForTimeout)
-    await expect(page.locator('.list-preview-tooltip')).not.toBeVisible();
+    const invokes = await page.evaluate(() => (window as any).__e2e_invokes__);
+    // Should re-invoke show_tooltip with updated position (scroll tracking)
+    const showCall = invokes.find((i: any) => i.cmd === "show_tooltip");
+    expect(showCall).toBeTruthy();
   });
 
-  test("hover 대기 중 스크롤 → 툴팁 안 뜸", async ({ page }) => {
+  test("hover 대기 중 스크롤 → show_tooltip 미호출", async ({ page }) => {
     await setupScrollablePage(page);
     await page.goto("http://localhost:1420");
     await page.waitForSelector('[data-testid="app-root"]');
 
-    // Hover but don't wait full 1 second
+    // Hover but don't wait for delay
     await page.hover('[data-testid="list-card-List-1"]');
-    await page.waitForTimeout(300);
+    await page.waitForTimeout(100);
 
     // Scroll before timer fires
     await page.locator('.content').evaluate(el => el.scrollBy(0, 100));
 
-    // Wait for timer to have expired
-    await page.waitForTimeout(1000);
+    // Clear invokes and wait
+    await page.evaluate(() => { (window as any).__e2e_invokes__ = []; });
+    await page.waitForTimeout(600);
 
-    // Tooltip should never have appeared
-    await expect(page.locator('.list-preview-tooltip')).not.toBeVisible();
+    // show_tooltip should NOT have been called after scroll
+    const invokes = await page.evaluate(() => (window as any).__e2e_invokes__);
+    const showCall = invokes.find((i: any) => i.cmd === "show_tooltip");
+    expect(showCall).toBeFalsy();
   });
 });

@@ -67,21 +67,19 @@ function App() {
   const [showNewListInput, setShowNewListInput] = useState(false);
   const [newTaskSubject, setNewTaskSubject] = useState("");
   const [terminal, setTerminal] = useState("terminal");
-  const [tooltip, setTooltip] = useState<{
-    id: string;
-    text: string;
-    x: number;
-    y: number;
-  } | null>(null);
+  const [spawnMode, setSpawnMode] = useState("normal");
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [showListMenu, setShowListMenu] = useState(false);
   const [statusDropdown, setStatusDropdown] = useState<{ taskId: string; x: number; y: number } | null>(null);
-  const [listPreview, setListPreview] = useState<{ name: string; x: number; y: number; above: boolean } | null>(null);
+  const [statusDropdownIndex, setStatusDropdownIndex] = useState(0);
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tooltipDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tooltipTargetRef = useRef<{ testId: string; payload: any } | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [renamingCard, setRenamingCard] = useState<string | null>(null);
   const [cardRenameValue, setCardRenameValue] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null); // list name pending delete confirmation
 
   // Auto-update state
   const [updateState, setUpdateState] = useState<
@@ -166,9 +164,10 @@ function App() {
 
   useEffect(() => {
     loadLists();
-    invoke<{ terminal?: string }>("get_config")
+    invoke<{ terminal?: string; spawnMode?: string }>("get_config")
       .then((config) => {
         if (config.terminal) setTerminal(config.terminal);
+        if (config.spawnMode) setSpawnMode(config.spawnMode);
       })
       .catch(() => {});
     const unlisten = listen("tasks-changed", () => {
@@ -188,9 +187,14 @@ function App() {
     };
   }, [loadLists]);
 
-  // Re-enable mouse focus on real mouse movement
+  // Re-enable mouse focus only on real mouse movement (not synthetic browser events)
+  const lastMousePosRef = useRef({ x: 0, y: 0 });
   useEffect(() => {
-    const handleMouseMove = () => {
+    const handleMouseMove = (e: MouseEvent) => {
+      const dx = e.clientX - lastMousePosRef.current.x;
+      const dy = e.clientY - lastMousePosRef.current.y;
+      lastMousePosRef.current = { x: e.clientX, y: e.clientY };
+      if (dx === 0 && dy === 0) return;
       mouseSuppressionRef.current = false;
     };
     document.addEventListener("mousemove", handleMouseMove);
@@ -211,18 +215,35 @@ function App() {
   }, []);
 
   // Reset focusedIndex on screen change or tab change
+  // When returning to listlist from tasklist, restore focus to the list we came from
+  const lastListNameRef = useRef<string | null>(null);
   useEffect(() => {
-    setFocusedIndex(0);
+    if (screen.type === "listlist" && lastListNameRef.current) {
+      const filtered = getVisibleLists();
+      const idx = filtered.findIndex((l) => l.name === lastListNameRef.current);
+      setFocusedIndex(idx >= 0 ? idx : 0);
+      lastListNameRef.current = null;
+    } else {
+      setFocusedIndex(0);
+    }
     setEditingTaskId(null);
+    // Fully reset tooltip state on screen change
+    invoke("hide_tooltip").catch(() => {});
+    tooltipTargetRef.current = null;
+    if (tooltipDelayRef.current) clearTimeout(tooltipDelayRef.current);
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    if (focusTooltipTimerRef.current) clearTimeout(focusTooltipTimerRef.current);
   }, [screen, activeTab]);
 
   // Focus change: dismiss tooltips, scroll into view, re-show tooltip after 1s dwell
   useEffect(() => {
-    // Dismiss any existing tooltip/preview
-    setTooltip(null);
-    setListPreview(null);
-    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    // Dismiss any existing tooltip timers on focus change
     if (focusTooltipTimerRef.current) clearTimeout(focusTooltipTimerRef.current);
+    if (mouseSuppressionRef.current) {
+      invoke("hide_tooltip").catch(() => {});
+      if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+      if (tooltipDelayRef.current) clearTimeout(tooltipDelayRef.current);
+    }
 
     // Scroll focused item into view (slight delay so highlight paints first)
     const scrollTimer = setTimeout(() => {
@@ -252,7 +273,8 @@ function App() {
     }
     }, 50);
 
-    // Start 1s timer for focused item tooltip
+    // Start 1s dwell timer only for keyboard navigation (not mouse hover)
+    if (!mouseSuppressionRef.current) return () => { clearTimeout(scrollTimer); };
     focusTooltipTimerRef.current = setTimeout(() => {
       if (screen.type === "tasklist") {
         const currentList = lists.find((l) => l.name === screen.listName);
@@ -270,12 +292,11 @@ function App() {
           const el = document.querySelector(`[data-testid="task-item-${task.id}"]`);
           if (el) {
             const rect = el.getBoundingClientRect();
-            setTooltip({
-              id: task.id,
-              text: task.description,
-              x: rect.left,
-              y: rect.bottom + 4,
-            });
+            invoke("show_tooltip", {
+              payload: { type: "text", text: task.description },
+              itemY: rect.top,
+              itemHeight: rect.height,
+            }).catch(() => {});
           }
         }
       } else if (screen.type === "listlist") {
@@ -285,11 +306,18 @@ function App() {
           const el = document.querySelector(`[data-testid="list-card-${list.name}"]`);
           if (el) {
             const rect = el.getBoundingClientRect();
-            const estimatedHeight = Math.min(list.total, 8) * 20 + 24;
-            const spaceBelow = window.innerHeight - rect.bottom;
-            const above = spaceBelow < estimatedHeight + 8;
-            const y = above ? rect.top - 4 : rect.bottom + 4;
-            setListPreview({ name: list.name, x: rect.left, y, above });
+            const previewList = lists.find((l) => l.name === list.name);
+            if (previewList) {
+              const sorted = [...previewList.tasks]
+                .sort((a, b) => (STATUS_ORDER[a.status] ?? 1) - (STATUS_ORDER[b.status] ?? 1) || Number(a.id) - Number(b.id));
+              const items = sorted.slice(0, 8).map(t => ({ subject: t.subject, status: t.status }));
+              const moreCount = Math.max(0, previewList.tasks.length - 8);
+              invoke("show_tooltip", {
+                payload: { type: "list", items, moreCount },
+                itemY: rect.top,
+                itemHeight: rect.height,
+              }).catch(() => {});
+            }
           }
         }
       }
@@ -332,10 +360,12 @@ function App() {
         if (e.key === "ArrowDown") {
           e.preventDefault();
           mouseSuppressionRef.current = true;
+          setConfirmDelete(null);
           setFocusedIndex((prev) => (prev + 1) % count);
         } else if (e.key === "ArrowUp") {
           e.preventDefault();
           mouseSuppressionRef.current = true;
+          setConfirmDelete(null);
           setFocusedIndex((prev) => (prev - 1 + count) % count);
         } else if (e.key === "Enter" && e.metaKey) {
           e.preventDefault();
@@ -344,11 +374,28 @@ function App() {
             handleSpawnAll(list.name);
             invoke("hide_window").catch(() => {});
           }
-        } else if (e.key === "Enter") {
+        } else if (e.key === "Enter" || e.key === "ArrowRight") {
           e.preventDefault();
           const list = filtered[focusedIndex];
           if (list) {
+            lastListNameRef.current = list.name;
             setScreen({ type: "tasklist", listName: list.name });
+          }
+        } else if (e.code === "KeyN" && activeTab === "named") {
+          e.preventDefault();
+          setShowNewListInput(true);
+        } else if (e.key === "Delete" || e.key === "Backspace") {
+          e.preventDefault();
+          const list = filtered[focusedIndex];
+          if (!list) return;
+          if (confirmDelete === list.name) {
+            // Second press — confirmed
+            handleDeleteList(list.name);
+            setConfirmDelete(null);
+            setFocusedIndex((prev) => Math.min(prev, count - 2));
+          } else {
+            // First press — ask confirmation
+            setConfirmDelete(list.name);
           }
         }
       } else if (screen.type === "tasklist") {
@@ -364,6 +411,26 @@ function App() {
           tasks.filter((t) => t.status === s)
         );
         const count = flatTasks.length;
+
+        // Status dropdown layer — captures all keys while open
+        if (statusDropdown) {
+          e.preventDefault();
+          if (e.key === "ArrowDown") {
+            setStatusDropdownIndex((prev) => (prev + 1) % STATUS_OPTIONS.length);
+          } else if (e.key === "ArrowUp") {
+            setStatusDropdownIndex((prev) => (prev - 1 + STATUS_OPTIONS.length) % STATUS_OPTIONS.length);
+          } else if (e.key === "Enter") {
+            const opt = STATUS_OPTIONS[statusDropdownIndex];
+            const task = flatTasks.find((t) => t.id === statusDropdown.taskId);
+            if (task && opt.value !== task.status) {
+              handleSetStatus(screen.listName, task.id, opt.value);
+            }
+            setStatusDropdown(null);
+          } else if (e.key === "Escape") {
+            setStatusDropdown(null);
+          }
+          return;
+        }
 
         if (e.key === "ArrowDown") {
           e.preventDefault();
@@ -387,16 +454,48 @@ function App() {
             setEditingTaskId(task.id);
             setEditingTaskValue(task.subject);
           }
-        } else if (e.key === "Escape") {
+        } else if (e.code === "KeyE") {
+          // Toggle completed
+          e.preventDefault();
+          const task = flatTasks[focusedIndex];
+          if (task) {
+            const newStatus = task.status === "completed" ? "pending" : "completed";
+            handleSetStatus(screen.listName, task.id, newStatus);
+          }
+        } else if (e.code === "KeyS") {
+          // Open status dropdown
+          e.preventDefault();
+          const task = flatTasks[focusedIndex];
+          if (task) {
+            const el = document.querySelector(`[data-testid="task-status-${task.id}"]`);
+            if (el) {
+              const rect = el.getBoundingClientRect();
+              const currentIdx = STATUS_OPTIONS.findIndex((o) => o.value === task.status);
+              setStatusDropdownIndex(currentIdx >= 0 ? currentIdx : 0);
+              setStatusDropdown({ taskId: task.id, x: rect.left, y: rect.bottom + 4 });
+            }
+          }
+        } else if (e.key === "Escape" || e.key === "ArrowLeft") {
           e.preventDefault();
           setScreen({ type: "listlist" });
+        } else if (e.code === "KeyN") {
+          e.preventDefault();
+          const input = document.querySelector<HTMLInputElement>('[data-testid="input-new-task"]');
+          if (input) input.focus();
+        } else if (e.key === "Delete" || e.key === "Backspace") {
+          e.preventDefault();
+          const task = flatTasks[focusedIndex];
+          if (task) {
+            handleDeleteTask(screen.listName, task.id);
+            if (focusedIndex >= count - 1) setFocusedIndex(Math.max(0, count - 2));
+          }
         }
       }
     };
 
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [screen, activeTab, lists, focusedIndex, editingTaskId]);
+  }, [screen, activeTab, lists, focusedIndex, editingTaskId, confirmDelete, statusDropdown, statusDropdownIndex]);
 
   const handleSetTerminal = async (value: string) => {
     setTerminal(value);
@@ -404,6 +503,15 @@ function App() {
       await invoke("set_terminal", { terminal: value });
     } catch (err) {
       console.error("Failed to set terminal:", err);
+    }
+  };
+
+  const handleSetSpawnMode = async (value: string) => {
+    setSpawnMode(value);
+    try {
+      await invoke("set_spawn_mode", { mode: value });
+    } catch (err) {
+      console.error("Failed to set spawn mode:", err);
     }
   };
 
@@ -500,18 +608,35 @@ function App() {
     setContextMenu({ x: e.clientX, y: e.clientY, items });
   };
 
-  const showTooltip = (task: Task, e: React.MouseEvent) => {
+  const showTaskTooltip = (task: Task, e: React.MouseEvent) => {
     if (!task.description) return;
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    setTooltip({
-      id: task.id,
-      text: task.description,
-      x: rect.left,
-      y: rect.top - 4,
-    });
+    const el = e.currentTarget as HTMLElement;
+    const testId = `task-text-${task.id}`;
+    const payload = { type: "text" as const, text: task.description };
+    if (tooltipDelayRef.current) clearTimeout(tooltipDelayRef.current);
+    if (focusTooltipTimerRef.current) clearTimeout(focusTooltipTimerRef.current);
+    tooltipDelayRef.current = setTimeout(() => {
+      const rect = el.getBoundingClientRect();
+      tooltipTargetRef.current = { testId, payload };
+      invoke("show_tooltip", {
+        payload,
+        itemY: rect.top,
+        itemHeight: rect.height,
+      }).catch(() => {});
+    }, 400);
   };
 
-  const hideTooltip = () => setTooltip(null);
+  const hideTooltip = () => {
+    if (tooltipDelayRef.current) clearTimeout(tooltipDelayRef.current);
+    tooltipTargetRef.current = null;
+    invoke("hide_tooltip").catch(() => {});
+  };
+
+  const handleContentScroll = () => {
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    if (tooltipDelayRef.current) clearTimeout(tooltipDelayRef.current);
+    hideTooltip();
+  };
 
   const progressPercent = (list: TaskList) => {
     if (list.total === 0) return 0;
@@ -570,6 +695,14 @@ function App() {
               </option>
             ))}
           </select>
+          <select
+            className="header-terminal-select"
+            value={spawnMode}
+            onChange={(e) => handleSetSpawnMode(e.target.value)}
+          >
+            <option value="normal">Normal</option>
+            <option value="dangerously-skip-permissions">Skip Perms</option>
+          </select>
         </div>
         {/* Tab bar */}
         <div className="tab-bar">
@@ -589,10 +722,7 @@ function App() {
           </button>
         </div>
         <div className="divider" />
-        <div className="content" onScroll={() => {
-          if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
-          setListPreview(null);
-        }}>
+        <div className="content" onScroll={handleContentScroll}>
           {(() => {
             const filtered = getVisibleLists();
 
@@ -601,26 +731,41 @@ function App() {
                 key={list.name}
                 className={`list-card${screen.type === "listlist" && idx === focusedIndex ? " focused" : ""}`}
                 data-testid={`list-card-${list.name}`}
-                onClick={() =>
-                  setScreen({ type: "tasklist", listName: list.name })
+                onClick={() => {
+                  lastListNameRef.current = list.name;
+                  setScreen({ type: "tasklist", listName: list.name });
                 }
-                onMouseEnter={(e) => {
+                }
+                onMouseEnter={() => {
                   if (mouseSuppressionRef.current) return;
                   if (idx >= 0) setFocusedIndex(idx);
                   if (list.total > 0) {
-                    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+                    if (focusTooltipTimerRef.current) clearTimeout(focusTooltipTimerRef.current);
+                    const testId = `list-card-${list.name}`;
                     hoverTimerRef.current = setTimeout(() => {
-                      const estimatedHeight = Math.min(list.total, 8) * 20 + 24;
-                      const spaceBelow = window.innerHeight - rect.bottom;
-                      const above = spaceBelow < estimatedHeight + 8;
-                      const y = above ? rect.top - 4 : rect.bottom + 4;
-                      setListPreview({ name: list.name, x: rect.left, y, above });
-                    }, 1000);
+                      const previewList = lists.find((l) => l.name === list.name);
+                      if (!previewList) return;
+                      const sorted = [...previewList.tasks]
+                        .sort((a, b) => (STATUS_ORDER[a.status] ?? 1) - (STATUS_ORDER[b.status] ?? 1) || Number(a.id) - Number(b.id));
+                      const items = sorted.slice(0, 8).map(t => ({ subject: t.subject, status: t.status }));
+                      const moreCount = Math.max(0, previewList.tasks.length - 8);
+                      const payload = { type: "list" as const, items, moreCount };
+                      const el = document.querySelector(`[data-testid="${testId}"]`);
+                      if (!el) return;
+                      const rect = el.getBoundingClientRect();
+                      tooltipTargetRef.current = { testId, payload };
+                      invoke("show_tooltip", {
+                        payload,
+                        itemY: rect.top,
+                        itemHeight: rect.height,
+                      }).catch(() => {});
+                    }, 400);
                   }
                 }}
                 onMouseLeave={() => {
                   if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
-                  setListPreview(null);
+                  hideTooltip();
                 }}
                 onContextMenu={(e) =>
                   showContextMenu(e, [
@@ -665,10 +810,16 @@ function App() {
                     />
                   ) : (
                     <span className="list-name">
-                      {list.name}{" "}
-                      <span className="list-count-inline">
-                        ({list.completed}/{list.total})
-                      </span>
+                      {confirmDelete === list.name ? (
+                        <span className="confirm-delete">Delete? press again</span>
+                      ) : (
+                        <>
+                          {list.name}{" "}
+                          <span className="list-count-inline">
+                            ({list.completed}/{list.total})
+                          </span>
+                        </>
+                      )}
                     </span>
                   )}
                   {showSpawn && (
@@ -694,18 +845,20 @@ function App() {
                   />
                 </div>
                 {list.projectDir ? (
-                  <div
-                    className="list-project-dir clickable"
-                    onClick={async (e) => {
-                      e.stopPropagation();
-                      const picked = await invoke<string | null>("pick_directory", { defaultPath: list.projectDir });
-                      if (picked && picked !== list.projectDir) {
-                        await invoke("set_project_dir", { listName: list.name, projectDir: picked });
-                        await loadLists();
-                      }
-                    }}
-                  >
-                    {list.projectDir.replace(/^\/Users\/[^/]+/, "~")}
+                  <div className="list-project-dir">
+                    <span
+                      className="clickable"
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        const picked = await invoke<string | null>("pick_directory", { defaultPath: list.projectDir });
+                        if (picked && picked !== list.projectDir) {
+                          await invoke("set_project_dir", { listName: list.name, projectDir: picked });
+                          await loadLists();
+                        }
+                      }}
+                    >
+                      {list.projectDir.replace(/^\/Users\/[^/]+/, "~")}
+                    </span>
                   </div>
                 ) : (
                   <button
@@ -733,9 +886,16 @@ function App() {
             return filtered.map((list, i) => renderCard(list, true, i));
           })()}
 
-          {activeTab === "named" &&
-            (showNewListInput ? (
-              <div className="list-card new-list-input-card">
+          {activeTab === "unnamed" &&
+            lists.filter((l) => isUuid(l.name)).length === 0 && (
+              <div className="empty-state">No unnamed sessions</div>
+            )}
+        </div>
+
+        {activeTab === "named" && (
+          <div className="bottom-bar">
+            {showNewListInput ? (
+              <div className="bottom-bar-input">
                 <input
                   data-testid="input-new-list-name"
                   className="text-input"
@@ -748,6 +908,7 @@ function App() {
                   onKeyDown={(e) => {
                     if (e.key === "Enter") handleCreateList();
                     if (e.key === "Escape") {
+                      e.stopPropagation();
                       setShowNewListInput(false);
                       setNewListName("");
                     }
@@ -760,49 +921,17 @@ function App() {
               </div>
             ) : (
               <div
-                className="list-card new-list-card"
+                className="bottom-bar-action"
                 data-testid="btn-new-list"
                 onClick={() => setShowNewListInput(true)}
               >
-                <span className="new-list-text">+ New List</span>
+                + New List
               </div>
-            ))}
-
-          {activeTab === "unnamed" &&
-            lists.filter((l) => isUuid(l.name)).length === 0 && (
-              <div className="empty-state">No unnamed sessions</div>
             )}
-        </div>
+          </div>
+        )}
 
-        {/* List Preview Tooltip */}
-        {listPreview && (() => {
-          const previewList = lists.find((l) => l.name === listPreview.name);
-          if (!previewList || previewList.tasks.length === 0) return null;
-          const sorted = [...previewList.tasks]
-            .sort((a, b) => (STATUS_ORDER[a.status] ?? 1) - (STATUS_ORDER[b.status] ?? 1) || Number(a.id) - Number(b.id));
-          return (
-            <div
-              className="list-preview-tooltip"
-              style={listPreview.above
-                ? { left: listPreview.x, bottom: window.innerHeight - listPreview.y }
-                : { left: listPreview.x, top: listPreview.y }
-              }
-              onMouseEnter={() => setListPreview(null)}
-            >
-              {sorted.slice(0, 8).map((task) => (
-                <div key={task.id} className={`list-preview-item ${task.status === "completed" ? "preview-completed" : ""}`}>
-                  <span className={`preview-icon ${task.status === "in_progress" ? "status-active" : ""}`}>
-                    {task.status === "completed" ? "✓" : task.status === "in_progress" ? "◉" : "○"}
-                  </span>
-                  <span className="preview-text">{task.subject}</span>
-                </div>
-              ))}
-              {previewList.tasks.length > 8 && (
-                <div className="list-preview-more">+{previewList.tasks.length - 8} more</div>
-              )}
-            </div>
-          );
-        })()}
+        {/* List Preview Tooltip — now rendered in secondary tooltip window */}
 
         {/* Context Menu */}
         {contextMenu && (
@@ -934,7 +1063,7 @@ function App() {
         </div>
       </div>
       <div className="divider" />
-      <div className="content">
+      <div className="content" onScroll={handleContentScroll}>
         {sortedTasks.length === 0 && (
           <div className="empty-state" data-testid="empty-state">
             No tasks yet
@@ -999,10 +1128,10 @@ function App() {
                     style={{ left: statusDropdown.x, top: statusDropdown.y }}
                     onClick={(e) => e.stopPropagation()}
                   >
-                    {STATUS_OPTIONS.map((opt) => (
+                    {STATUS_OPTIONS.map((opt, i) => (
                       <div
                         key={opt.value}
-                        className={`status-dropdown-item ${opt.value === task.status ? "active" : ""}`}
+                        className={`status-dropdown-item ${opt.value === task.status ? "active" : ""} ${statusDropdownIndex === i ? "focused" : ""}`}
                         onClick={async () => {
                           if (opt.value !== task.status) {
                             await handleSetStatus(screen.listName, task.id, opt.value);
@@ -1046,7 +1175,7 @@ function App() {
                   <span
                     className="task-text"
                     data-testid={`task-text-${task.id}`}
-                    onMouseEnter={(e) => showTooltip(task, e)}
+                    onMouseEnter={(e) => showTaskTooltip(task, e)}
                     onMouseLeave={hideTooltip}
                   >
                     {task.subject}
@@ -1068,8 +1197,11 @@ function App() {
           </div>
         ))}
 
-        {/* Add Task */}
-        <div className="add-task-row">
+      </div>
+
+      {/* Add Task — fixed bottom */}
+      <div className="bottom-bar">
+        <div className="bottom-bar-input">
           <input
             data-testid="input-new-task"
             className="text-input"
@@ -1079,6 +1211,7 @@ function App() {
             onChange={(e) => setNewTaskSubject(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter") handleAddTask(screen.listName);
+              if (e.key === "Escape") { e.stopPropagation(); (e.target as HTMLInputElement).blur(); }
             }}
           />
           <button
@@ -1091,16 +1224,7 @@ function App() {
         </div>
       </div>
 
-      {/* Tooltip */}
-      {tooltip && (
-        <div
-          className="tooltip"
-          data-testid={`task-tooltip-${tooltip.id}`}
-          style={{ left: tooltip.x, top: tooltip.y }}
-        >
-          {tooltip.text}
-        </div>
-      )}
+      {/* Tooltip — now rendered in secondary tooltip window */}
 
       {/* Context Menu */}
       {contextMenu && (
