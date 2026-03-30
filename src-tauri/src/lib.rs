@@ -1,7 +1,7 @@
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -839,12 +839,29 @@ fn spawn_task(list_name: String, task_id: String) -> Result<(), String> {
         String::new()
     };
 
+    // Build prompt for task context
+    let subject = task["subject"].as_str().unwrap_or("");
+    let description = task["description"].as_str().unwrap_or("");
+
+    let mut prompt = format!("[Task #{}: {}]", task_id, subject);
+    if !description.is_empty() {
+        prompt.push_str(&format!("\\nDescription: {}", description));
+    }
+    prompt.push_str(&format!(
+        "\\n\\nRead task #{} via TaskGet for full details, then start working on it immediately. When done, mark complete via TaskUpdate.",
+        task_id
+    ));
+    let escaped_prompt = prompt.replace('\'', "'\\''");
+
     if status == "in_progress" && existing_session_id.is_some() {
-        // Resume existing session
+        // Resume existing session — cd to where the session was originally created
         let session_id = existing_session_id.unwrap();
+        let resume_cd = find_session_project_dir(&session_id)
+            .map(|dir| format!("cd \"{}\" && ", dir))
+            .unwrap_or_else(|| cd_prefix.clone());
         let command = format!(
-            "{}CLAUDE_CODE_TASK_LIST_ID={} claude --resume {}",
-            cd_prefix, list_name, session_id
+            "{}CLAUDE_CODE_TASK_LIST_ID={} claude --resume {} $'{}'",
+            resume_cd, list_name, session_id, escaped_prompt
         );
         spawn_in_terminal(&command)
     } else {
@@ -860,23 +877,142 @@ fn spawn_task(list_name: String, task_id: String) -> Result<(), String> {
         let updated = serde_json::to_string_pretty(&task).map_err(|e| e.to_string())?;
         fs::write(&task_path, updated).map_err(|e| e.to_string())?;
 
-        let subject = task["subject"].as_str().unwrap_or("");
-        let description = task["description"].as_str().unwrap_or("");
-
-        let mut prompt = format!("[Task #{} - {}]", task_id, subject);
-        if !description.is_empty() {
-            prompt.push_str(&format!("\\nDescription: {}", description));
-        }
-        prompt.push_str("\\n\\nStart working on this task immediately. Use only the information above.");
-        prompt.push_str(&format!("\\nWhen done, mark it complete with TaskUpdate(taskId: \\\"{}\\\", status: \\\"completed\\\").", task_id));
-
-        let escaped = prompt.replace('\'', "'\\''");
         let command = format!(
             "{}CLAUDE_CODE_TASK_LIST_ID={} claude --session-id {} $'{}'",
-            cd_prefix, list_name, session_id, escaped
+            cd_prefix, list_name, session_id, escaped_prompt
         );
         spawn_in_terminal(&command)
     }
+}
+
+/// Deploy bundled tasklist plugin to ~/.claude/plugins/ on first run.
+/// Copies plugin files to cache, registers in installed_plugins.json,
+/// and enables in settings.json.
+fn deploy_bundled_plugin(resource_dir: &Path) {
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => return,
+    };
+    let claude_dir = home.join(".claude");
+    let cache_dir = claude_dir.join("plugins/cache/claude-task-list-app/tasklist/1.1.0");
+    let plugin_source = resource_dir.join("resources/plugins/tasklist");
+
+    // Skip if source doesn't exist (dev mode without bundled resources)
+    if !plugin_source.exists() {
+        println!("[plugin-deploy] No bundled plugin found at {:?}, skipping", plugin_source);
+        return;
+    }
+
+    // Skip if already deployed at this version
+    let marker = cache_dir.join(".claude-plugin/plugin.json");
+    if marker.exists() {
+        // Check version matches
+        if let Ok(content) = fs::read_to_string(&marker) {
+            if content.contains("\"version\": \"1.1.0\"") {
+                println!("[plugin-deploy] Plugin already deployed at 1.1.0, skipping");
+                return;
+            }
+        }
+    }
+
+    println!("[plugin-deploy] Deploying bundled tasklist plugin...");
+
+    // Copy plugin files recursively
+    if let Err(e) = copy_dir_recursive(&plugin_source, &cache_dir) {
+        eprintln!("[plugin-deploy] Failed to copy plugin files: {}", e);
+        return;
+    }
+
+    // Register in installed_plugins.json
+    let registry_path = claude_dir.join("plugins/installed_plugins.json");
+    if let Ok(content) = fs::read_to_string(&registry_path) {
+        if let Ok(mut registry) = serde_json::from_str::<serde_json::Value>(&content) {
+            let key = "tasklist@claude-task-list-app";
+            if let Some(plugins) = registry.get_mut("plugins").and_then(|p| p.as_object_mut()) {
+                if !plugins.contains_key(key) {
+                    let now = chrono_now_iso();
+                    let entry = serde_json::json!([{
+                        "scope": "user",
+                        "installPath": cache_dir.to_string_lossy(),
+                        "version": "1.1.0",
+                        "installedAt": now,
+                        "lastUpdated": now
+                    }]);
+                    plugins.insert(key.to_string(), entry);
+                    if let Ok(json) = serde_json::to_string_pretty(&registry) {
+                        let _ = fs::write(&registry_path, json);
+                        println!("[plugin-deploy] Registered in installed_plugins.json");
+                    }
+                }
+            }
+        }
+    }
+
+    // Enable in settings.json
+    let settings_path = claude_dir.join("settings.json");
+    if let Ok(content) = fs::read_to_string(&settings_path) {
+        if let Ok(mut settings) = serde_json::from_str::<serde_json::Value>(&content) {
+            let key = "tasklist@claude-task-list-app";
+            if let Some(enabled) = settings.get_mut("enabledPlugins").and_then(|p| p.as_object_mut()) {
+                if !enabled.contains_key(key) {
+                    enabled.insert(key.to_string(), serde_json::json!(true));
+                    if let Ok(json) = serde_json::to_string_pretty(&settings) {
+                        let _ = fs::write(&settings_path, json);
+                        println!("[plugin-deploy] Enabled in settings.json");
+                    }
+                }
+            }
+        }
+    }
+
+    println!("[plugin-deploy] Bundled tasklist plugin deployed successfully");
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
+}
+
+fn chrono_now_iso() -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = now.as_secs();
+    // Simple ISO 8601 without chrono crate
+    let days_since_epoch = secs / 86400;
+    let time_of_day = secs % 86400;
+    let hours = time_of_day / 3600;
+    let minutes = (time_of_day % 3600) / 60;
+    let seconds = time_of_day % 60;
+
+    // Calculate year/month/day from days since epoch (1970-01-01)
+    let mut y = 1970i64;
+    let mut remaining = days_since_epoch as i64;
+    loop {
+        let days_in_year = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 366 } else { 365 };
+        if remaining < days_in_year { break; }
+        remaining -= days_in_year;
+        y += 1;
+    }
+    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+    let month_days = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut m = 0usize;
+    for (i, &d) in month_days.iter().enumerate() {
+        if remaining < d as i64 { m = i; break; }
+        remaining -= d as i64;
+    }
+
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.000Z", y, m + 1, remaining + 1, hours, minutes, seconds)
 }
 
 fn start_file_watcher(app_handle: tauri::AppHandle) {
@@ -1138,6 +1274,11 @@ pub fn run() {
                         });
                     }
                 });
+            }
+
+            // Deploy bundled plugin on first run
+            if let Ok(resource_dir) = app.path().resource_dir() {
+                deploy_bundled_plugin(&resource_dir);
             }
 
             // Start file watcher

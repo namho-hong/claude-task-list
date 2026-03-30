@@ -1,0 +1,11 @@
+{
+  "name": "tasklist",
+  "version": "1.1.0",
+  "description": "Create task lists and add tasks to existing lists for Claude Code",
+  "author": {
+    "name": "Team Offlight",
+    "url": "https://github.com/namho-hong"
+  },
+  "repository": "https://github.com/namho-hong/team-offlight-claude-code-plugins",
+  "license": "MIT"
+}
