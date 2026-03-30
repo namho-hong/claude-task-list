@@ -27,6 +27,25 @@
           "state": "active",
           "radius": 12.0
         }
+      },
+      {
+        "label": "tooltip",
+        "title": "",
+        "url": "tooltip.html",
+        "width": 300,
+        "height": 200,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "visible": false,
+        "skipTaskbar": true,
+        "alwaysOnTop": true,
+        "focusable": false,
+        "windowEffects": {
+          "effects": ["hudWindow"],
+          "state": "active",
+          "radius": 8.0
+        }
       }
     ],
     "macOSPrivateApi": true,
